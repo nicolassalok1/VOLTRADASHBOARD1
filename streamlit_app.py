@@ -1,4 +1,5 @@
 import importlib.util
+import runpy
 from pathlib import Path
 
 import streamlit as st
@@ -16,6 +17,7 @@ def _load_module(name: str, path: Path):
 BASE_DIR = Path(__file__).parent
 SCRIPTS_APP_PATH = BASE_DIR / "scripts" / "streamlit_app.py"
 SOURCES_APP_PATH = BASE_DIR / "streamlit_app3.py"
+GPT_APP_PATH = BASE_DIR / "streamlit_appGPT.py"
 
 st.set_page_config(page_title="Volatility + RL Dashboards", layout="wide")
 st.title("Volatility + RL Dashboards")
@@ -34,7 +36,26 @@ except Exception as exc:
     st.error(f"Impossible de charger l’app sources : {exc}")
 
 
-tabs_main = st.tabs(["Volatility Tools", "RL & Finance Lab"])
+def _run_gpt_app():
+    """Exécute l’app GPT (AI Trading Bot) en neutralisant set_page_config pour éviter les collisions."""
+    if not GPT_APP_PATH.exists():
+        st.warning("Module GPT introuvable.")
+        return
+    try:
+        original_set_page_config = st.set_page_config
+        st.set_page_config = lambda *args, **kwargs: None
+    except Exception:
+        original_set_page_config = None
+    try:
+        runpy.run_path(GPT_APP_PATH, run_name="__main__")
+    except Exception as exc:
+        st.error(f"Erreur lors de l’exécution de l’app GPT : {exc}")
+    finally:
+        if original_set_page_config is not None:
+            st.set_page_config = original_set_page_config
+
+
+tabs_main = st.tabs(["Volatility Tools", "RL & Finance Lab", "AI Trading Bot"])
 
 with tabs_main[0]:
     st.subheader("Volatility Tools")
@@ -115,3 +136,7 @@ with tabs_main[1]:
 
         with rl_tabs[4]:
             sources_app.render_strategies_nlp_sentiment()
+
+with tabs_main[2]:
+    st.subheader("AI Trading Bot")
+    _run_gpt_app()

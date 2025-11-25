@@ -33,8 +33,9 @@ import re
 APP_DIR = Path(__file__).resolve().parent
 DB_DIR = APP_DIR / "database"
 DB_DIR.mkdir(exist_ok=True)
-SCRIPTS_DIR = APP_DIR / "scripts"
-PRICING_DIR = APP_DIR / "pricing_scripts"
+# Scripts/pricing now sous scripts/scriptsGPT
+SCRIPTS_DIR = APP_DIR / "scripts" / "scriptsGPT"
+PRICING_DIR = SCRIPTS_DIR / "pricing_scripts"
 DATASETS_DIR = DB_DIR / "data"
 DATASETS_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(SCRIPTS_DIR))
