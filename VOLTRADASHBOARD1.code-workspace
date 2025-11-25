@@ -3,14 +3,6 @@
 		{
 			"name": "VOLTRADASHBOARD1",
 			"path": "."
-		},
-		{
-			"name": "sources",
-			"path": "../EARNINGTRADING3-main/sources"
-		},
-		{
-			"name": "scripts",
-			"path": "../VOLTRADINGTOOL2-main/scripts"
 		}
 	],
 	"settings": {}
