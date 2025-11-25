@@ -16,7 +16,8 @@ from scipy.optimize import minimize
 from wordcloud import WordCloud
 
 BASE_DIR = Path(__file__).parent
-SOURCES_DIR = BASE_DIR / "sources"
+# Data and helper modules now live under scripts/sources.
+SOURCES_DIR = BASE_DIR / "scripts" / "sources"
 RL4F_BASE = SOURCES_DIR / "rl4f"
 RL4F_DIRS = [
     RL4F_BASE / "trading_dql",
