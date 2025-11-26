@@ -7371,7 +7371,15 @@ def chatgpt_response(message: str):
         - Reads OPENAI_API_KEY from environment.
     """
     try:
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Coerce env values to strings to avoid Path-like objects breaking httpx/OpenAI
+        api_key_env = os.getenv("OPENAI_API_KEY")
+        base_url_env = os.getenv("OPENAI_BASE_URL")
+        if api_key_env is not None and not isinstance(api_key_env, str):
+            api_key_env = os.fspath(api_key_env)
+        if base_url_env is not None and not isinstance(base_url_env, str):
+            base_url_env = os.fspath(base_url_env)
+
+        client = OpenAI(api_key=api_key_env, base_url=base_url_env)
         portfolio_data = json.dumps(fetch_portfolio(), indent=2)
         open_orders = json.dumps(fetch_open_orders(), indent=2)
         
