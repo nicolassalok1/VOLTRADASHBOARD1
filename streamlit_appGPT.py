@@ -53,6 +53,30 @@ FORWARDS_FILE = DB_DIR / "forwards.json"
 LEGACY_EXPIRED_FILE = DB_DIR / "expired_options.json"
 load_dotenv()
 
+def _coerce_env_to_str(name: str) -> str | None:
+    """Ensure env vars are strings (avoid WindowsPath objects breaking .startswith)."""
+    val = os.getenv(name)
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        val = os.fspath(val)
+        os.environ[name] = val
+    return val
+
+# Coerce frequently used env vars that feed into HTTP clients
+for _env_key in [
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "APCA_API_KEY_ID",
+    "APCA_API_SECRET_KEY",
+    "APCA_API_BASE_URL",
+]:
+    _coerce_env_to_str(_env_key)
+
 def run_app_options():
     """
     Render the options pricing tab (legacy monolith) inside the main Streamlit app.
@@ -6130,10 +6154,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             render_option_tabs_for_type(_label, _char)
 
 # Alpaca API Setup
-key = "PKRQ4GPVDAPCYIH6QGR4HI5USK"
-secret_key = "3mENa9jXaLhESSekQzvz4cRh758awvBppB7Dfs9o1LJw"
-BASE_URL = "https://paper-api.alpaca.markets/"
-api = tradeapi.REST(key, secret_key, BASE_URL, api_version="v2")
+key = os.getenv("APCA_API_KEY_ID") or "PKRQ4GPVDAPCYIH6QGR4HI5USK"
+secret_key = os.getenv("APCA_API_SECRET_KEY") or "3mENa9jXaLhESSekQzvz4cRh758awvBppB7Dfs9o1LJw"
+BASE_URL = os.getenv("APCA_API_BASE_URL") or "https://paper-api.alpaca.markets/"
+api = tradeapi.REST(str(key), str(secret_key), str(BASE_URL), api_version="v2")
 
 # Page config
 st.set_page_config(page_title="AI Trading Bot", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
@@ -6553,15 +6577,20 @@ def compute_option_pnl(option: dict, spot_at_event: float, mark_price: float | N
     side = (option.get("side") or "long").lower()
     payoff_value = mark_price if mark_price is not None else compute_option_payoff(option, spot_at_event)
 
+    payoff_total = payoff_value * quantity
+    premium_total = premium * quantity
+
     if side == "long":
-        pnl_per_unit = payoff_value - premium
+        pnl_total = payoff_total - premium_total
     else:
-        pnl_per_unit = premium - payoff_value
+        pnl_total = premium_total - payoff_total
+
+    pnl_per_unit = pnl_total / quantity if quantity else 0.0
 
     return {
         "payoff_per_unit": payoff_value,
         "pnl_per_unit": pnl_per_unit,
-        "pnl_total": pnl_per_unit * quantity,
+        "pnl_total": pnl_total,
     }
 
 
@@ -7431,6 +7460,7 @@ def process_expired_options():
 
         S_T = get_underlying_close_on_date(underlying, exp_date) if underlying else 0.0
         pnl = compute_option_pnl(pos, S_T)
+        payoff_unit = float(pnl.get("payoff_per_unit", 0.0))
 
         book[option_id] = {
             **pos,
@@ -7438,6 +7468,7 @@ def process_expired_options():
             "status": "expired",
             "underlying_close": S_T,
             "closed_at": today.isoformat(),
+            "payoff_per_unit": payoff_unit,
         }
         changed = True
 
@@ -8330,17 +8361,31 @@ with tab1:
         exp_rows = []
         for key, opt in expired_options.items():
             exp_rows.append({
-                "ID/Contract": key,
-                "Underlying": opt.get("underlying"),
-                "Type": str(opt.get("option_type") or opt.get("type", "")).capitalize(),
-                "Side": str(opt.get("side", "")).capitalize(),
-                "Strike": opt.get("strike"),
-                "Expiration": opt.get("expiration"),
                 "Qty": opt.get("quantity"),
-                "Closed at": opt.get("closed_at"),
-                "Source": opt.get("_source", "book"),
+                "Underlying": opt.get("underlying"),
+                "Side": str(opt.get("side", "")).capitalize(),
+                "Type": str(opt.get("option_type") or opt.get("type", "")).capitalize(),
+                "T_0 Price": opt.get("avg_price"),
+                "Strike": opt.get("strike"),
+                "Closing asset price": opt.get("underlying_close"),
+                "Payoff/unit": opt.get("payoff_per_unit"),
+                "PnL total": opt.get("pnl_total"),
+                "Expiration": opt.get("expiration"),
             })
         df_exp = pd.DataFrame(exp_rows)
+        desired_cols = [
+            "Qty",
+            "Underlying",
+            "Side",
+            "Type",
+            "T_0 Price",
+            "Strike",
+            "Closing asset price",
+            "Payoff/unit",
+            "PnL total",
+            "Expiration",
+        ]
+        df_exp = df_exp[[c for c in desired_cols if c in df_exp.columns]]
         st.dataframe(df_exp, width="stretch", hide_index=True)
         if legacy_book:
             st.caption("Source merge : options_portfolio.json + options_book.json (legacy).")

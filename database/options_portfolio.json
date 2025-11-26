@@ -346,6 +346,32 @@
     "r": 0.02,
     "q": 0.0
   },
+  "exp_test_payoff": {
+    "underlying": "TSLA",
+    "option_type": "put",
+    "product": "vanilla",
+    "product_type": "Vanilla (BSM)",
+    "type": "vanilla",
+    "strike": 250.0,
+    "strike2": null,
+    "expiration": "2025-11-01",
+    "quantity": 2,
+    "avg_price": 8.5,
+    "side": "short",
+    "S0": 255.0,
+    "status": "expired",
+    "underlying_close": 230.0,
+    "payoff_per_unit": 20.0,
+    "pnl_per_unit": -11.5,
+    "pnl_total": -23.0,
+    "closed_at": "2025-11-02",
+    "misc": {
+      "r": 0.02,
+      "q": 0.0
+    },
+    "r": 0.02,
+    "q": 0.0
+  },
   "demo_vanilla_heston": {
     "underlying": "SPY",
     "option_type": "call",
