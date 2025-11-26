@@ -6773,6 +6773,82 @@ def mark_option_market_value(option: dict, chain_entry: dict | None = None) -> t
     return spot, T_years, sigma, float(mark_price), method
 
 
+def _bsm_greeks(S: float, K: float, T: float, r: float, sigma: float, option_type: str, q: float = 0.0) -> dict:
+    """Compute BSM Greeks (delta, gamma, vega, theta, rho) for a call/put."""
+    if S <= 0 or K <= 0 or T <= 0 or sigma <= 0:
+        return {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
+    r_eff = float(r) - float(q or 0.0)
+    sqrtT = math.sqrt(T)
+    d1 = (math.log(S / K) + (r_eff + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+    pdf_d1 = (1.0 / math.sqrt(2 * math.pi)) * math.exp(-0.5 * d1 * d1)
+    if option_type == "call":
+        delta = math.exp(-q * T) * norm_cdf(d1)
+        theta = (
+            - (S * math.exp(-q * T) * pdf_d1 * sigma) / (2 * sqrtT)
+            - r * K * math.exp(-r * T) * norm_cdf(d2)
+            + q * S * math.exp(-q * T) * norm_cdf(d1)
+        )
+        rho = K * T * math.exp(-r * T) * norm_cdf(d2)
+    else:
+        delta = -math.exp(-q * T) * norm_cdf(-d1)
+        theta = (
+            - (S * math.exp(-q * T) * pdf_d1 * sigma) / (2 * sqrtT)
+            + r * K * math.exp(-r * T) * norm_cdf(-d2)
+            - q * S * math.exp(-q * T) * norm_cdf(-d1)
+        )
+        rho = -K * T * math.exp(-r * T) * norm_cdf(-d2)
+    gamma = math.exp(-q * T) * pdf_d1 / (S * sigma * sqrtT)
+    vega = S * math.exp(-q * T) * pdf_d1 * sqrtT
+    return {
+        "delta": delta,
+        "gamma": gamma,
+        "vega": vega,
+        "theta": theta,
+        "rho": rho,
+    }
+
+
+def compute_option_greeks(option: dict, chain_entry: dict | None = None) -> dict:
+    """
+    Compute Greeks lazily for an option entry using BSM inputs.
+    Heavy calls (rates/dividends) happen only when invoked.
+    """
+    spot, T_years, sigma_used, _, _ = mark_option_market_value(option, chain_entry=chain_entry)
+    strike = float(option.get("strike", 0.0) or 0.0)
+    option_type = (option.get("option_type") or option.get("type") or "").lower()
+    if spot <= 0 or strike <= 0 or T_years is None or T_years <= 0 or sigma_used <= 0 or option_type not in {"call", "put"}:
+        return {
+            "delta": None,
+            "gamma": None,
+            "vega": None,
+            "theta": None,
+            "rho": None,
+            "spot": spot,
+            "T": T_years,
+            "sigma": sigma_used,
+        }
+    try:
+        r_val = float(get_r(T_years) or 0.0)
+    except Exception:
+        r_val = 0.0
+    try:
+        q_val = float(get_q(option.get("underlying", "")) or 0.0) if option.get("underlying") else 0.0
+    except Exception:
+        q_val = 0.0
+    greeks = _bsm_greeks(
+        S=spot,
+        K=strike,
+        T=T_years,
+        r=r_val,
+        sigma=max(sigma_used, 1e-6),
+        option_type=option_type,
+        q=q_val,
+    )
+    greeks.update({"spot": spot, "T": T_years, "sigma": sigma_used, "r": r_val, "q": q_val})
+    return greeks
+
+
 def add_option_to_dashboard(record: dict) -> str:
     """
     Normalize and persist an option/structure into the unified options book.
@@ -8075,6 +8151,37 @@ with tab1:
                         if not st.session_state.get(state_key, False):
                             st.info("Lance le pricing pour afficher les détails.")
                             continue
+                        greeks_state_key = f"greeks_{key}"
+                        if st.button("📐 Calculer Greeks (BSM)", key=f"calc_greeks_{key}"):
+                            try:
+                                chain_list = st.session_state.get(f"chain_cache_{underlying}") or []
+                                chain_entry = None
+                                if chain_list and pos.get("expiration") and strike:
+                                    try:
+                                        expiry_date = datetime.date.fromisoformat(pos.get("expiration"))
+                                        days_to_expiry = (expiry_date - datetime.date.today()).days
+                                        target_T = max(days_to_expiry, 0) / 365.0
+                                    except Exception:
+                                        target_T = None
+                                    if target_T is not None:
+                                        best = None
+                                        best_score = float("inf")
+                                        for c in chain_list:
+                                            cT = float(c.get("T", 0.0) or 0.0)
+                                            cK = float(c.get("strike", 0.0) or 0.0)
+                                            scale = max(strike, 1.0)
+                                            score = abs(cT - target_T) + abs(cK - strike) / scale
+                                            if score < best_score:
+                                                best_score = score
+                                                best = c
+                                        chain_entry = best
+                                greeks = compute_option_greeks(pos, chain_entry=chain_entry)
+                                st.session_state[greeks_state_key] = greeks
+                                st.success("Greeks calculés.")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Erreur lors du calcul des Greeks : {exc}")
+                        greeks_vals = st.session_state.get(greeks_state_key)
                         close_qty = st.selectbox(
                             "Quantity to close",
                             options=list(range(1, close_max + 1)),
@@ -8097,11 +8204,24 @@ with tab1:
                             st.metric("Qty", f"{qty}")
                         with col_c:
                             st.metric("PnL if closed", f"${pnl_total:.2f}", delta=f"{pnl_per_unit:.4f}")
+                            if greeks_vals:
+                                st.caption(
+                                    f"Δ {greeks_vals.get('delta') if greeks_vals.get('delta') is not None else '-':}"
+                                    f" | Γ {greeks_vals.get('gamma') if greeks_vals.get('gamma') is not None else '-':}"
+                                    f" | Vega {greeks_vals.get('vega') if greeks_vals.get('vega') is not None else '-':}"
+                                )
                         if isinstance(misc, dict) and misc:
                             st.caption(f"Misc: {misc}")
                         st.caption(f"Pricing fn: {pricing_fn}")
                         st.caption(f"Paramètres requis: {needed}")
                         st.caption(f"Paramètres disponibles: {sorted(available)}")
+                        if greeks_vals:
+                            col_g1, col_g2, col_g3, col_g4, col_g5 = st.columns(5)
+                            col_g1.metric("Delta", f"{greeks_vals.get('delta', '-'):}")
+                            col_g2.metric("Gamma", f"{greeks_vals.get('gamma', '-'):}")
+                            col_g3.metric("Vega", f"{greeks_vals.get('vega', '-'):}")
+                            col_g4.metric("Theta", f"{greeks_vals.get('theta', '-'):}")
+                            col_g5.metric("Rho", f"{greeks_vals.get('rho', '-'):}")
                         # Afficher les valeurs connues pour chaque paramètre requis
                         def _param_value(k: str):
                             if k == "option_type":
