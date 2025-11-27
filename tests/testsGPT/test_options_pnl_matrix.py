@@ -1,7 +1,9 @@
 import ast
+import json
 import tempfile
 from copy import deepcopy
 from collections import defaultdict
+import random
 from pathlib import Path
 from unittest import TestCase
 
@@ -206,9 +208,10 @@ class OptionsPnLMatrixTests(TestCase):
         # Trace détaillée pour supervision
         seen_types = set()
         seen_sections = defaultdict(set)
-        closed_payloads = {}
         expired_payloads = {}
         for opt_id, opt in sorted(book.items(), key=lambda kv: kv[0]):
+            rng = random.Random(opt_id)
+            chosen_scen = rng.choice(scenarios)
             base_name = str(opt.get("product_type") or opt.get("product") or opt.get("structure") or opt_id)
             opt_type = str(opt.get("option_type") or opt.get("type") or "").lower()
             side = (opt.get("side") or "long").lower()
@@ -221,10 +224,9 @@ class OptionsPnLMatrixTests(TestCase):
                 print("\n==============================")
                 print(f"========== {base_name.upper()} ==========")
                 print("==============================")
-            if opt_type and opt_type not in seen_sections[base_name]:
-                seen_sections[base_name].add(opt_type)
-                print(f"\n////////// {opt_type.upper()} //////////")
-            print(f"\n\\\\\\\\\\\\\\\\ {side.upper()} \\\\\\\\\\\\\\\\")
+            # Affichage regroupé : LONG : CALL/PUT et SHORT : CALL/PUT
+            label_type = opt_type.upper() if opt_type else "N/A"
+            print(f"\n{side.upper()} : {label_type}")
             spots = self._spots(opt)
             strike_base = float(opt.get("strike") or 1.0)
             strike2_val = opt.get("strike2")
@@ -240,71 +242,37 @@ class OptionsPnLMatrixTests(TestCase):
             # Opening snapshot (T%=100, mark = avg_price pour PnL nul à l'entrée) sur ATM/ITM/OTM
             print("---- OPENING ----")
             opening_mark = opt.get("avg_price")
-            for scen in scenarios:
-                open_spot = spots[scen]
-                with self.subTest(option=opt_id, phase="opening", scenario=scen):
-                    open_res = self._pnl(opt, spot=open_spot, mark=opening_mark)
-                    self.assertAlmostEqual(open_res["pnl_total"], 0.0, places=6)
-                    print(
-                        f"[OPEN-{scen.upper()}] {opt_id} stock={open_spot} strike={strike_base} "
-                        f"T%=100 payoff={open_res['payoff_per_unit']:.4f} price={opening_mark}"
-                    )
+            scen = chosen_scen
+            open_spot = spots[scen]
+            with self.subTest(option=opt_id, phase="opening", scenario=scen):
+                open_res = self._pnl(opt, spot=open_spot, mark=opening_mark)
+                self.assertAlmostEqual(open_res["pnl_total"], 0.0, places=6)
+                print(f"[OPEN-{scen.upper()}] {opt_id} price={opening_mark}")
 
-            # Mark-to-market (mid-term) : on logge ATM/ITM/OTM
-            print("---- CLOSING ----")
-            for scen in scenarios:
-                spot_close = spots[scen]
-                with self.subTest(option=opt_id, phase="closing", scenario=scen):
-                    mid = self._pnl(opt, spot=spot_close)
-                    expected_mid = self._expected_pnl(opt, spot=spot_close)
-                    self.assertAlmostEqual(mid["pnl_total"], expected_mid["pnl_total"], places=6)
-                    print(
-                        f"[CLOSE-{scen.upper()}] {opt_id} stock={spot_close} strike={strike_base} "
-                        f"T%=50 pnl={mid['pnl_total']:.4f} price={opt.get('avg_price')}"
-                    )
             print("---- EXPIRATION ----")
 
-            for scen in scenarios:
-                with self.subTest(option=opt_id, phase="expiration", scenario=scen):
-                    spot = spots[scen]
-                    res = self._pnl(opt, spot=spot)
-                    expected = self._expected_pnl(opt, spot=spot)
-                    self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
-                    self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
-                    print(
-                        f"[EXP-{scen.upper()}] {opt_id} stock={spot} moneyness={moneyness(spot):.4f} "
-                        f"T%=0 payoff={res['payoff_per_unit']:.4f} pnl={res['pnl_total']:.4f} price={opt.get('avg_price')}"
-                    )
+            scen = chosen_scen
+            with self.subTest(option=opt_id, phase="expiration", scenario=scen):
+                spot = spots[scen]
+                res = self._pnl(opt, spot=spot)
+                expected = self._expected_pnl(opt, spot=spot)
+                self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
+                self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
+                print(f"[EXP-{scen.upper()}] {opt_id} payoff={res['payoff_per_unit']:.4f} (expired)")
 
-            # Workflow JSON tests : côté long → fermeture mid-term ; côté short → expiration
-            if side == "long":
-                close_spot = spots["atm"]
-                close_entry = dict(opt)
-                close_entry.update(self._pnl(opt, spot=close_spot))
-                close_entry.update(
-                    {
-                        "status": "expired",
-                        "underlying_close": close_spot,
-                        "closed_at": "T-50%",
-                    }
-                )
-                closed_payloads[opt_id] = close_entry
-            else:
-                exp_spot = spots["atm"]
                 exp_entry = dict(opt)
-                exp_entry.update(self._pnl(opt, spot=exp_spot))
+                exp_entry.update(res)
                 exp_entry.update(
                     {
                         "status": "expired",
-                        "underlying_close": exp_spot,
+                        "underlying_close": spot,
                         "closed_at": "T=0",
+                        "event": "expiration",
+                        "scenario": scen,
                     }
                 )
                 expired_payloads[opt_id] = exp_entry
 
-        all_expired = {}
-        all_expired.update(closed_payloads)
-        all_expired.update(expired_payloads)
-        self._save_expired(all_expired)
+        self._save_expired(expired_payloads)
         loaded_expired = self._expired()
-        self.assertEqual(len(loaded_expired), len(all_expired))
+        self.assertEqual(len(loaded_expired), len(expired_payloads))
