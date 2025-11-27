@@ -345,7 +345,11 @@ def view_rainbow(s0: float, s0b: float, strike: float, span: float = 0.5, n: int
     s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
     s_grid_b = np.linspace(s0b * (1.0 - span), s0b * (1.0 + span), n)
     payoff_grid = payoff_rainbow(s_grid, s_grid_b, strike, option_type=kwargs.get("option_type", "call"))
-    premium = float(payoff_rainbow(s0, s0b, strike, option_type=kwargs.get("option_type", "call")))
+    opt_type = kwargs.get("option_type", "call")
+    # Approx: moyenne des primes vanilla sur chaque actif
+    premium_a = bs_price_call(s0, strike, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T)) if opt_type != "put" else bs_price_put(s0, strike, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T))
+    premium_b = bs_price_call(s0b, strike, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T)) if opt_type != "put" else bs_price_put(s0b, strike, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T))
+    premium = 0.5 * (premium_a + premium_b)
     pnl_grid = payoff_grid - premium
     bes = _find_breakevens_from_grid(s_grid, pnl_grid)
     return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
@@ -434,7 +438,9 @@ def payoff_forward_start(spot_T, spot_start: float, m: float = 1.0, option_type:
 
 
 def view_forward_start(s0: float, spot_start: float, m: float = 1.0, span: float = 0.5, n: int = 300, **kwargs):
-    premium = float(payoff_forward_start(s0, spot_start, m=m, option_type=kwargs.get("option_type", "call")))
+    k_eff = m * spot_start
+    opt_type = kwargs.get("option_type", "call")
+    premium = bs_price_call(s0, k_eff, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T)) if opt_type != "put" else bs_price_put(s0, k_eff, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T))
     s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
     payoff_grid = np.array([payoff_forward_start(s, spot_start, m=m, option_type=kwargs.get("option_type", "call")) for s in s_grid])
     pnl_grid = payoff_grid - premium
