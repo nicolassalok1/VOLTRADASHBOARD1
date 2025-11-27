@@ -1,6 +1,8 @@
 import importlib.util
 import runpy
 from pathlib import Path
+import sys
+import traceback
 
 import streamlit as st
 
@@ -53,7 +55,11 @@ def _run_gpt_app():
     try:
         runpy.run_path(GPT_APP_PATH, run_name="__main__")
     except Exception as exc:
+        err_tb = traceback.format_exc()
+        print("=== GPT app exception ===", file=sys.stderr)
+        print(err_tb, file=sys.stderr)
         st.error(f"Erreur lors de l’exécution de l’app GPT : {exc}")
+        st.caption("Trace complète envoyée dans la sortie terminal (stderr).")
     finally:
         if original_set_page_config is not None:
             st.set_page_config = original_set_page_config

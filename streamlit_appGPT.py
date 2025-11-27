@@ -114,6 +114,10 @@ def run_app_options():
     Side effects: imports heavy numerical libs, sets TensorFlow flags, reads/writes JSON
     files in ./database, and invokes networked data sources (yfinance, requests).
     """
+    # TensorFlow et certains modules inspectent sys.argv ; force tout en str pour éviter les Path
+    import sys as _sys
+
+    _sys.argv = [str(a) for a in _sys.argv]
     import io
     import math
     import os
@@ -6941,15 +6945,17 @@ def add_option_to_dashboard(record: dict) -> str:
 
     # Canonical fields for storage (uniform schema)
     entry["underlying"] = entry.get("underlying") or entry.get("ticker") or entry.get("symbol") or ""
-    product_val = entry.get("product") or entry.get("product_type") or entry.get("structure") or "vanilla"
+    product_val_raw = entry.get("product") or entry.get("product_type") or entry.get("structure") or "vanilla"
+    product_val = str(product_val_raw)
     entry["product"] = product_val
     entry["product_type"] = product_val
     entry["type"] = entry.get("type") or "vanilla"
+    pv_lower = product_val.lower()
     entry["option_type"] = (
         entry.get("option_type")
         or entry.get("cpflag")
         or entry.get("cp")
-        or ("call" if str(product_val).lower().startswith("call") else "put")
+        or ("call" if pv_lower.startswith("call") else "put")
     )
     entry["side"] = entry.get("side") or "long"
     entry["strike"] = _f(entry.get("strike"))
@@ -7516,15 +7522,17 @@ def chatgpt_response(message: str):
         - Reads OPENAI_API_KEY from environment.
     """
     try:
-        # Coerce env values to strings to avoid Path-like objects breaking httpx/OpenAI
+        # Coerce env values to plain strings before passing to OpenAI/httpx
         api_key_env = os.getenv("OPENAI_API_KEY")
         base_url_env = os.getenv("OPENAI_BASE_URL")
         if api_key_env is not None and not isinstance(api_key_env, str):
             api_key_env = os.fspath(api_key_env)
-        if base_url_env is not None and not isinstance(base_url_env, str):
-            base_url_env = os.fspath(base_url_env)
+        if base_url_env:
+            base_url_env = os.fspath(base_url_env) if not isinstance(base_url_env, str) else base_url_env
+        else:
+            base_url_env = None
 
-        client = OpenAI(api_key=api_key_env, base_url=base_url_env)
+        client = OpenAI(api_key=str(api_key_env) if api_key_env else None, base_url=str(base_url_env) if base_url_env else None)
         portfolio_data = json.dumps(fetch_portfolio(), indent=2)
         open_orders = json.dumps(fetch_open_orders(), indent=2)
         
@@ -7903,7 +7911,7 @@ with tab1:
             row["Allocation %"] = f"{alloc:.2f}%"
         df_my_portfolio = pd.DataFrame(portfolio_data)
         # Drop helper column used for allocation and reorder columns
-        df_my_portfolio = df_my_portfolio.drop(columns=[c for c in df_my_portfolio.columns if c.startswith("_")], errors="ignore")
+        df_my_portfolio = df_my_portfolio.drop(columns=[c for c in df_my_portfolio.columns if str(c).startswith("_")], errors="ignore")
         col_order = [
             "Allocation %",
             "Symbol",
@@ -8855,7 +8863,7 @@ with tab4:
         horizontal=True,
         key="fwd_side",
     )
-    fwd_side = "long" if fwd_side_label.startswith("Long") else "short"
+    fwd_side = "long" if str(fwd_side_label).startswith("Long") else "short"
 
     if st.button("Enregistrer le forward", type="primary", key="btn_save_forward"):
         if fwd_symbol and forward_price > 0:
