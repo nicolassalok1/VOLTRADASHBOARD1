@@ -6,5 +6,5 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $repoRoot
 
-Write-Host "=== Running tests via unittest discover (tests/)..."
-python -m unittest discover -s tests -p "test*.py" -t . @args | Tee-Object -FilePath "tests/testsGPT/test_run.log"
+Write-Host "=== Running tests via unittest discover (tests/) verbose..."
+python -m unittest discover -v -s tests -p "test*.py" -t . @args | Tee-Object -FilePath "tests/testsGPT/test_run.log"
