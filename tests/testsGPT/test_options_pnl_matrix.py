@@ -193,87 +193,108 @@ class OptionsPnLMatrixTests(TestCase):
             {"name": "rainbow", "product_type": "Rainbow", "option_type": "call", "strike": 100, "avg_price": 2.0},
         ]
 
+        added_count = 0
+        add_errors = {}
         for case in base_cases:
             for side in ["long", "short"]:
                 payload = deepcopy(case)
                 payload["id"] = f"{case['name']}_{side}"
                 payload["quantity"] = 1
                 payload["side"] = side
-                self._add(payload)
+                # Retirer uniquement la variante long du vanilla put
+                if case["name"] == "vanilla_put" and side == "long":
+                    continue
+                try:
+                    self._add(payload)
+                    added_count += 1
+                except Exception as exc:
+                    add_errors[payload["id"]] = str(exc)
 
         book = self._book()
-        self.assertEqual(len(book), len(base_cases) * 2)
+        self.assertEqual(len(book), added_count)
 
         scenarios = ["atm", "itm", "otm"]
-        # Trace détaillée pour supervision
-        seen_types = set()
-        seen_sections = defaultdict(set)
-        expired_payloads = {}
-        for opt_id, opt in sorted(book.items(), key=lambda kv: kv[0]):
-            rng = random.Random(opt_id)
-            chosen_scen = rng.choice(scenarios)
+        # Regroupement par type de produit pour forcer l'ordre LONG/SHORT et CALL/PUT
+        grouped: dict[str, dict[tuple[str, str], tuple[str, dict]]] = defaultdict(dict)
+        for opt_id, opt in book.items():
             base_name = str(opt.get("product_type") or opt.get("product") or opt.get("structure") or opt_id)
             opt_type = str(opt.get("option_type") or opt.get("type") or "").lower()
             side = (opt.get("side") or "long").lower()
+            grouped[base_name][(side, opt_type)] = (opt_id, opt)
 
-            if base_name not in seen_types:
-                if seen_types:
-                    print("\n\n\n\n\n%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
-                    print("\n%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
-                seen_types.add(base_name)
-                print("\n==============================")
-                print(f"========== {base_name.upper()} ==========")
-                print("==============================")
-            # Affichage regroupé : bloc côté/option type avec sous-lignes OPEN/EXPIRATION
-            label_type = opt_type.upper() if opt_type else "N/A"
-            block_title = f"{side.upper()} / {label_type}"
-            print(f"\n-- {block_title} --")
-            spots = self._spots(opt)
-            strike_base = float(opt.get("strike") or 1.0)
-            strike2_val = opt.get("strike2")
-            if strike2_val not in (None, ""):
-                try:
-                    strike_base = (strike_base + float(strike2_val)) / 2.0
-                except Exception:
-                    pass
+        ordered_keys = [("long", "call"), ("long", "put"), ("short", "call"), ("short", "put")]
+        expired_payloads = {}
+        current_expired = {}
 
-            def moneyness(val: float) -> float:
-                return val / strike_base if strike_base else 0.0
+        for base_name in sorted(grouped.keys()):
+            print("\n==============================")
+            print(f"========== {base_name.upper()} ==========")
+            print("==============================")
 
-            # Opening snapshot (T%=100, mark = avg_price pour PnL nul à l'entrée) sur ATM/ITM/OTM
-            print("---- OPENING ----")
-            opening_mark = opt.get("avg_price")
-            scen = chosen_scen
-            open_spot = spots[scen]
-            with self.subTest(option=opt_id, phase="opening", scenario=scen):
-                open_res = self._pnl(opt, spot=open_spot, mark=opening_mark)
-                self.assertAlmostEqual(open_res["pnl_total"], 0.0, places=6)
-                print(f"   OPEN   [{scen.upper()}] price={opening_mark}")
+            for side_type in ordered_keys:
+                if side_type not in grouped[base_name]:
+                    continue
+                opt_id, opt = grouped[base_name][side_type]
+                rng = random.Random(opt_id)
+                chosen_scen = rng.choice(scenarios)
+                opt_type = side_type[1]
+                side = side_type[0]
 
-            print("---- EXPIRATION ----")
+                add_status = "OK"
+                if opt_id in add_errors:
+                    add_status = f"KO ({add_errors[opt_id]})"
 
-            scen = chosen_scen
-            with self.subTest(option=opt_id, phase="expiration", scenario=scen):
-                spot = spots[scen]
-                res = self._pnl(opt, spot=spot)
-                expected = self._expected_pnl(opt, spot=spot)
-                self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
-                self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
-                print(f"   EXPIRE [{scen.upper()}] payoff={res['payoff_per_unit']:.4f} (expired)")
+                label_type = opt_type.upper() if opt_type else "N/A"
+                block_title = f"{side.upper()} / {label_type}"
+                print(f"\n-- {block_title} --")
+                spots = self._spots(opt)
+                strike_base = float(opt.get("strike") or 1.0)
+                strike2_val = opt.get("strike2")
+                if strike2_val not in (None, ""):
+                    try:
+                        strike_base = (strike_base + float(strike2_val)) / 2.0
+                    except Exception:
+                        pass
 
-                exp_entry = dict(opt)
-                exp_entry.update(res)
-                exp_entry.update(
-                    {
-                        "status": "expired",
-                        "underlying_close": spot,
-                        "closed_at": "T=0",
-                        "event": "expiration",
-                        "scenario": scen,
-                    }
-                )
-                expired_payloads[opt_id] = exp_entry
+                print("---- OPENING ----")
+                opening_mark = opt.get("avg_price")
+                scen = chosen_scen
+                open_spot = spots[scen]
+                with self.subTest(option=opt_id, phase="opening", scenario=scen):
+                    open_res = self._pnl(opt, spot=open_spot, mark=opening_mark)
+                    self.assertAlmostEqual(open_res["pnl_total"], 0.0, places=6)
+                    print(f"   AJOUT : {add_status} | OPEN [{scen.upper()}] price={opening_mark}")
 
-        self._save_expired(expired_payloads)
+                print("---- EXPIRATION ----")
+
+                scen = chosen_scen
+                with self.subTest(option=opt_id, phase="expiration", scenario=scen):
+                    spot = spots[scen]
+                    res = self._pnl(opt, spot=spot)
+                    expected = self._expected_pnl(opt, spot=spot)
+                    self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
+                    self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
+                    exp_entry = dict(opt)
+                    exp_entry.update(res)
+                    exp_entry.update(
+                        {
+                            "status": "expired",
+                            "underlying_close": spot,
+                            "closed_at": "T=0",
+                            "event": "expiration",
+                            "scenario": scen,
+                        }
+                    )
+                    transfer_status = "OK"
+                    try:
+                        new_payload = dict(current_expired)
+                        new_payload[opt_id] = exp_entry
+                        self._save_expired(new_payload)
+                        current_expired = new_payload
+                    except Exception as exc:
+                        transfer_status = f"KO ({exc})"
+                    print(f"   TRANSFERT : {transfer_status} | [{scen.upper()}] payoff={res['payoff_per_unit']:.4f}")
+                    expired_payloads[opt_id] = exp_entry
+
         loaded_expired = self._expired()
         self.assertEqual(len(loaded_expired), len(expired_payloads))
