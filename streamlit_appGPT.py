@@ -4655,7 +4655,145 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             ) = st.tabs(["Asian", "Asian géométrique", "Lookback", "Lookback fixed", "Forward-start", "Cliquet / Ratchet"])
 
         with tab_grp_barrier:
-            tab_barrier, tab_binary_barrier = st.tabs(["Barrière", "Binary barrière"])
+            tab_barrier_all, tab_barrier, tab_binary_barrier = st.tabs(
+                ["Barrières (Notebook)", "Barrière", "Binary barrière"]
+            )
+
+        with tab_barrier_all:
+            st.subheader("Barrières (vanilla / binaire) – vue Notebook")
+            try:
+                from pricing import fetch_spy_history as _fetch_spy_history  # local import for safety
+
+                spy_close = fetch_spy_history()
+                s0_ref = float(spy_close.iloc[-1])
+            except Exception as exc:
+                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
+                try:
+                    spy_close = _fetch_spy_history()
+                    s0_ref = float(spy_close.iloc[-1])
+                except Exception:
+                    s0_ref = float(common_spot_value)
+                    spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                strike_b = st.slider(
+                    "Strike",
+                    min_value=0.6 * s0_ref,
+                    max_value=1.4 * s0_ref,
+                    value=s0_ref,
+                    step=0.5,
+                    key=_k("barrier_all_strike"),
+                )
+                barrier_b = st.slider(
+                    "Barrière",
+                    min_value=0.5 * s0_ref,
+                    max_value=1.8 * s0_ref,
+                    value=1.05 * s0_ref,
+                    step=0.5,
+                    key=_k("barrier_all_level"),
+                )
+                call_put_b = st.selectbox("Type", ["call", "put"], key=_k("barrier_all_type"))
+            with col2:
+                direction_b = st.selectbox("Direction", ["up", "down"], key=_k("barrier_all_dir"))
+                knock_b = st.selectbox("Knock", ["out", "in"], key=_k("barrier_all_knock"))
+                binary_b = st.checkbox("Binaire ?", value=False, key=_k("barrier_all_binary"))
+                payout_b = st.slider(
+                    "Payout (si binaire)",
+                    min_value=0.5,
+                    max_value=5.0,
+                    value=1.0,
+                    step=0.5,
+                    key=_k("barrier_all_payout"),
+                )
+            with col3:
+                sigma_b = st.slider("Sigma", min_value=0.01, max_value=1.0, value=common_sigma_value, step=0.01, key=_k("barrier_all_sigma"))
+                r_b = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("barrier_all_r"))
+                T_b = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("barrier_all_T"))
+
+            with st.spinner("Calcul..."):
+                view_dyn = view_barrier(
+                    s0_ref,
+                    strike_b,
+                    barrier_b,
+                    direction=direction_b,
+                    knock=knock_b,
+                    option_type=call_put_b,
+                    payout=payout_b,
+                    binary=binary_b,
+                    r=r_b,
+                    q=0.0,
+                    sigma=sigma_b,
+                    T=T_b,
+                )
+                premium = float(view_dyn.get("premium", 0.0))
+                s_grid = view_dyn["s_grid"]
+                payoff_grid = view_dyn["payoff"]
+                pnl_grid = view_dyn["pnl"]
+                payoff_s0 = float(np.interp(s0_ref, s_grid, payoff_grid))
+                pnl_s0 = payoff_s0 - premium
+
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.axhline(strike_b, color="gray", linestyle="--", label=f"Strike = {strike_b:.2f}")
+            ax_ts.axhline(barrier_b, color="firebrick", linestyle=":", label=f"Barriere = {barrier_b:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (strike/barrière)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(barrier_b, color="firebrick", linestyle=":", label=f"Barriere = {barrier_b:.2f}")
+            ax_pay.axvline(strike_b, color="gray", linestyle="--", label=f"K = {strike_b:.2f}")
+            ax_pay.axvline(s0_ref, color="crimson", linestyle="-.", label=f"S0 = {s0_ref:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Barrier {'binaire' if binary_b else 'vanilla'} ({direction_b} / {knock_b})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
+
+            if st.button("💾 Enregistrer cette barrière", key=_k("save_barrier_all"), type="primary"):
+                payload = {
+                    "product": f"Barrier {'binary' if binary_b else 'vanilla'}",
+                    "option_type": call_put_b,
+                    "T": float(T_b),
+                    "S0": float(s0_ref),
+                    "strike": float(strike_b),
+                    "sigma": float(sigma_b),
+                    "r": float(r_b),
+                    "T_0": datetime.date.today().isoformat(),
+                    "price": premium,
+                    "status": "open",
+                    "misc": {
+                        "barrier": float(barrier_b),
+                        "barrier_type": direction_b,
+                        "direction": direction_b,
+                        "knock": knock_b,
+                        "binary": bool(binary_b),
+                        "payout": float(payout_b),
+                        "spot_at_pricing": float(s0_ref),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(f"Barrière enregistrée dans le dashboard (id: {option_id}).")
+                except Exception as exc:
+                    st.error(f"Erreur lors de l'enregistrement : {exc}")
+                    st.stop()
 
         with tab_grp_spreads:
             (
