@@ -78,10 +78,16 @@ from pricing import (
     price_strangle_bs,
     view_asset_or_nothing,
     view_barrier,
+    view_butterfly,
+    view_call_spread,
     view_calendar_spread,
     view_chooser,
+    view_condor,
     view_diagonal_spread,
     view_digital,
+    view_iron_butterfly,
+    view_iron_condor,
+    view_put_spread,
     view_quanto,
     view_rainbow,
     view_straddle,
@@ -5943,33 +5949,136 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 )
 
         with tab_iron_condor:
-            _render_payoff_dropdown(
-                "Iron Condor",
-                "Crédit maximum au centre (entre strikes courts), perte plafonnée entre les ailes longues.",
-                lambda s, K, K2: (
-                    (lambda k1, k2, k3, k4: max(k1 - s, 0.0) - max(k2 - s, 0.0) - max(s - k3, 0.0) + max(s - k4, 0.0))(
-                        K - max(abs(K2 - K), max(0.5, K * 0.05)) * 1.5,
-                        K - max(abs(K2 - K), max(0.5, K * 0.05)) * 0.5,
-                        K + max(abs(K2 - K), max(0.5, K * 0.05)) * 0.5,
-                        K + max(abs(K2 - K), max(0.5, K * 0.05)) * 1.5,
-                    )
-                ),
-                strike_lines_override=lambda K, K2: (
-                    lambda k1, k2, k3, k4: [k1, k2, k3, k4]
-                )(
-                    K - max(abs(K2 - K), max(0.5, K * 0.05)) * 1.5,
-                    K - max(abs(K2 - K), max(0.5, K * 0.05)) * 0.5,
-                    K + max(abs(K2 - K), max(0.5, K * 0.05)) * 0.5,
-                    K + max(abs(K2 - K), max(0.5, K * 0.05)) * 1.5,
-                ),
+            k_center = st.slider(
+                "Strike central (iron condor)",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("iron_condor_center"),
             )
-            _flag_ic = st.session_state.get(_k("run_iron_condor_done"), False)
-            if not _flag_ic:
-                if st.button("🚀 Lancer le pricing Iron Condor", key=_k("run_iron_condor_btn"), type="primary"):
-                    st.session_state[_k("run_iron_condor_done")] = True
-                    _flag_ic = True
-            if _flag_ic:
-                _render_structure_panel("Iron Condor")
+            inner = st.slider(
+                "Écart strikes courts",
+                min_value=max(0.1, 0.02 * float(common_spot_value)),
+                max_value=max(1.0, 0.5 * float(common_spot_value)),
+                value=max(0.5, 0.05 * float(common_spot_value)),
+                step=0.1,
+                key=_k("iron_condor_inner"),
+            )
+            outer_raw = st.slider(
+                "Écart strikes ailes",
+                min_value=max(0.2, 0.03 * float(common_spot_value)),
+                max_value=max(1.5, 0.7 * float(common_spot_value)),
+                value=max(0.9, 0.1 * float(common_spot_value)),
+                step=0.1,
+                key=_k("iron_condor_outer"),
+            )
+            outer = max(outer_raw, inner + max(0.1, 0.01 * float(common_spot_value)))
+
+            k_put_long = max(0.01, k_center - outer)
+            k_put_short = k_center - inner
+            k_call_short = k_center + inner
+            k_call_long = k_center + outer
+
+            view_dyn = view_iron_condor(
+                float(common_spot_value),
+                k_put_long,
+                k_put_short,
+                k_call_short,
+                k_call_long,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Iron Condor (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("iron_condor_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("iron_condor_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("iron_condor_side_inline"))
+            st.caption(
+                f"K put long: {k_put_long:.4f} | K put short: {k_put_short:.4f} | "
+                f"K call short: {k_call_short:.4f} | K call long: {k_call_long:.4f}"
+            )
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("iron_condor_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Iron Condor",
+                    "type": "Iron Condor",
+                    "strike": float(k_put_long),
+                    "strike2": float(k_call_long),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "put", "strike": float(k_put_long)},
+                        {"option_type": "put", "strike": float(k_put_short)},
+                        {"option_type": "call", "strike": float(k_call_short)},
+                        {"option_type": "call", "strike": float(k_call_long)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Iron Condor",
+                        "legs": [
+                            {"option_type": "put", "strike": float(k_put_long)},
+                            {"option_type": "put", "strike": float(k_put_short)},
+                            {"option_type": "call", "strike": float(k_call_short)},
+                            {"option_type": "call", "strike": float(k_call_long)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Iron condor ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_digital:
             _render_option_text("Digital (cash-or-nothing)", "digital_graph")
@@ -6115,108 +6224,701 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_strangle:
-            _render_payoff_dropdown(
-                "Strangle",
-                "Zone de gain : en dehors des strikes éloignés (put bas, call haut), payoff devient positif.",
-                lambda s, K, K2: max(K - s, 0.0) + max(s - K2, 0.0),
-                strike_lines_override=lambda K, K2: [K, K2],
+            k_put_raw = st.slider(
+                "Strike put",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=0.95 * float(common_spot_value),
+                step=0.5,
+                key=_k("strangle_k_put"),
             )
-            _flag = st.session_state.get(_k("run_strangle_done"), False)
-            if not _flag:
-                if st.button("🚀 Lancer le pricing Strangle", key=_k("run_strangle_btn"), type="primary"):
-                    st.session_state[_k("run_strangle_done")] = True
-                    _flag = True
-            if _flag:
-                _render_structure_panel("Strangle")
+            k_call_raw = st.slider(
+                "Strike call",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=1.05 * float(common_spot_value),
+                step=0.5,
+                key=_k("strangle_k_call"),
+            )
+            k_put = min(k_put_raw, k_call_raw)
+            k_call = max(k_put_raw, k_call_raw)
+
+            view_dyn = view_strangle(
+                float(common_spot_value),
+                k_put,
+                k_call,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Strangle (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("strangle_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("strangle_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("strangle_side_inline"))
+            st.caption(f"K_put: {k_put:.4f} | K_call: {k_call:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("strangle_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Strangle",
+                    "type": "Strangle",
+                    "strike": float(k_put),
+                    "strike2": float(k_call),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "put", "strike": float(k_put)},
+                        {"option_type": "call", "strike": float(k_call)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Strangle",
+                        "legs": [
+                            {"option_type": "put", "strike": float(k_put)},
+                            {"option_type": "call", "strike": float(k_call)},
+                        ],
+                        "strike_put": float(k_put),
+                        "strike_call": float(k_call),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Strangle ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_call_spread:
-            _render_payoff_dropdown(
-                "Call spread",
-                "Zone de gain : entre K (long call) et K2 (short call), payoff positif plafonné après K2.",
-                lambda s, K, K2: max(s - K, 0.0) - max(s - K2, 0.0),
+            k_long_raw = st.slider(
+                "Strike call long",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=0.95 * float(common_spot_value),
+                step=0.5,
+                key=_k("call_spread_k_long"),
             )
-            _flag = st.session_state.get(_k("run_call_spread_done"), False)
-            if not _flag:
-                if st.button("🚀 Lancer le pricing Call spread", key=_k("run_call_spread_btn"), type="primary"):
-                    st.session_state[_k("run_call_spread_done")] = True
-                    _flag = True
-            if _flag:
-                _render_structure_panel("Call spread")
+            k_short_raw = st.slider(
+                "Strike call short",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=1.05 * float(common_spot_value),
+                step=0.5,
+                key=_k("call_spread_k_short"),
+            )
+            k_long = min(k_long_raw, k_short_raw)
+            k_short = max(k_long_raw, k_short_raw)
+
+            view_dyn = view_call_spread(
+                float(common_spot_value),
+                k_long,
+                k_short,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Call spread (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("call_spread_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("call_spread_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("call_spread_side_inline"))
+            st.caption(f"K long: {k_long:.4f} | K short: {k_short:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("call_spread_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Call Spread",
+                    "type": "Call spread",
+                    "strike": float(k_long),
+                    "strike2": float(k_short),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "call", "strike": float(k_long)},
+                        {"option_type": "call", "strike": float(k_short)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Call spread",
+                        "legs": [
+                            {"option_type": "call", "strike": float(k_long)},
+                            {"option_type": "call", "strike": float(k_short)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Call spread ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_put_spread:
-            _render_payoff_dropdown(
-                "Put spread",
-                "Zone de gain : entre Kbas (put short) et Khaut (put long). Payoff plafonné au-dessus de Khaut.",
-                lambda s, K, K2: (
-                    max(max(K, K2) - s, 0.0) - max(min(K, K2) - s, 0.0)
-                ),
-                strike2_factor=0.95,
+            k_long_raw = st.slider(
+                "Strike put long",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=1.05 * float(common_spot_value),
+                step=0.5,
+                key=_k("put_spread_k_long"),
             )
-            _flag = st.session_state.get(_k("run_put_spread_done"), False)
-            if not _flag:
-                if st.button("🚀 Lancer le pricing Put spread", key=_k("run_put_spread_btn"), type="primary"):
-                    st.session_state[_k("run_put_spread_done")] = True
-                    _flag = True
-            if _flag:
-                _render_structure_panel("Put spread")
+            k_short_raw = st.slider(
+                "Strike put short",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=0.95 * float(common_spot_value),
+                step=0.5,
+                key=_k("put_spread_k_short"),
+            )
+            k_long = max(k_long_raw, k_short_raw)
+            k_short = min(k_long_raw, k_short_raw)
+
+            view_dyn = view_put_spread(
+                float(common_spot_value),
+                k_long,
+                k_short,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Put spread (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("put_spread_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("put_spread_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("put_spread_side_inline"))
+            st.caption(f"K long: {k_long:.4f} | K short: {k_short:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("put_spread_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Put Spread",
+                    "type": "Put spread",
+                    "strike": float(k_long),
+                    "strike2": float(k_short),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "put", "strike": float(k_long)},
+                        {"option_type": "put", "strike": float(k_short)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Put spread",
+                        "legs": [
+                            {"option_type": "put", "strike": float(k_long)},
+                            {"option_type": "put", "strike": float(k_short)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Put spread ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_butterfly:
-            _render_payoff_dropdown(
-                "Butterfly",
-                "Zone de gain : centrée autour de K2 (strikes courts), payoff en forme de tente, perte en dehors.",
-                lambda s, K, K2: max(s - K, 0.0) - 2 * max(s - K2, 0.0) + max(s - (K2 + (K2 - K)), 0.0),
+            k_center = st.slider(
+                "Strike central",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("butterfly_k_center"),
             )
-            _flag = st.session_state.get(_k("run_butterfly_done"), False)
-            if not _flag:
-                if st.button("🚀 Lancer le pricing Butterfly", key=_k("run_butterfly_btn"), type="primary"):
-                    st.session_state[_k("run_butterfly_done")] = True
-                    _flag = True
-            if _flag:
-                _render_structure_panel("Butterfly")
+            wing = st.slider(
+                "Écart ailes",
+                min_value=max(0.1, 0.02 * float(common_spot_value)),
+                max_value=max(1.0, 0.5 * float(common_spot_value)),
+                value=max(0.5, 0.05 * float(common_spot_value)),
+                step=0.1,
+                key=_k("butterfly_wing"),
+            )
+            k1 = max(0.01, k_center - wing)
+            k2 = k_center
+            k3 = k_center + wing
+
+            view_dyn = view_butterfly(
+                float(common_spot_value),
+                k1,
+                k2,
+                k3,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Butterfly (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("butterfly_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("butterfly_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("butterfly_side_inline"))
+            st.caption(f"K1: {k1:.4f} | K2: {k2:.4f} | K3: {k3:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("butterfly_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Butterfly",
+                    "type": "Butterfly",
+                    "strike": float(k1),
+                    "strike2": float(k3),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "call", "strike": float(k1)},
+                        {"option_type": "call", "strike": float(k2)},
+                        {"option_type": "call", "strike": float(k2)},
+                        {"option_type": "call", "strike": float(k3)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Butterfly",
+                        "legs": [
+                            {"option_type": "call", "strike": float(k1)},
+                            {"option_type": "call", "strike": float(k2)},
+                            {"option_type": "call", "strike": float(k2)},
+                            {"option_type": "call", "strike": float(k3)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Butterfly ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_condor:
-            _render_payoff_dropdown(
-                "Condor",
-                "Zone de gain : plateau central entre strikes courts, pertes en dehors des ailes.",
-                lambda s, K, K2: (
-                    max(s - (K * 0.97), 0.0)
-                    - max(s - K, 0.0)
-                    - max(s - K2, 0.0)
-                    + max(s - (K2 + (K - K * 0.97)), 0.0)
-                ),
-                strike_lines_override=lambda K, K2: [K, K2],
+            k_center = st.slider(
+                "Strike central (condor)",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("condor_center"),
             )
-            _flag = st.session_state.get(_k("run_condor_done"), False)
-            if not _flag:
-                if st.button("🚀 Lancer le pricing Condor", key=_k("run_condor_btn"), type="primary"):
-                    st.session_state[_k("run_condor_done")] = True
-                    _flag = True
-            if _flag:
-                _render_structure_panel("Condor")
+            inner = st.slider(
+                "Écart strikes courts",
+                min_value=max(0.1, 0.02 * float(common_spot_value)),
+                max_value=max(1.0, 0.5 * float(common_spot_value)),
+                value=max(0.5, 0.05 * float(common_spot_value)),
+                step=0.1,
+                key=_k("condor_inner"),
+            )
+            outer_raw = st.slider(
+                "Écart strikes ailes",
+                min_value=max(0.2, 0.03 * float(common_spot_value)),
+                max_value=max(1.5, 0.7 * float(common_spot_value)),
+                value=max(0.9, 0.1 * float(common_spot_value)),
+                step=0.1,
+                key=_k("condor_outer"),
+            )
+            outer = max(outer_raw, inner + max(0.1, 0.01 * float(common_spot_value)))
+
+            k1 = max(0.01, k_center - outer)
+            k2 = k_center - inner
+            k3 = k_center + inner
+            k4 = k_center + outer
+
+            view_dyn = view_condor(
+                float(common_spot_value),
+                k1,
+                k2,
+                k3,
+                k4,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Condor (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("condor_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("condor_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("condor_side_inline"))
+            st.caption(f"K1: {k1:.4f} | K2: {k2:.4f} | K3: {k3:.4f} | K4: {k4:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("condor_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Condor",
+                    "type": "Condor",
+                    "strike": float(k1),
+                    "strike2": float(k4),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "call", "strike": float(k1)},
+                        {"option_type": "call", "strike": float(k2)},
+                        {"option_type": "call", "strike": float(k3)},
+                        {"option_type": "call", "strike": float(k4)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Condor",
+                        "legs": [
+                            {"option_type": "call", "strike": float(k1)},
+                            {"option_type": "call", "strike": float(k2)},
+                            {"option_type": "call", "strike": float(k3)},
+                            {"option_type": "call", "strike": float(k4)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Condor ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_iron_bfly:
-            _render_payoff_dropdown(
-                "Iron Butterfly",
-                "Straddle vendu au centre, ailes longues protègent en dehors. Payoff en tente inversée (crédit maximal autour de K).",
-                lambda s, K, K2: (
-                    (lambda w: max((K - w) - s, 0.0) - max(K - s, 0.0) - max(s - K, 0.0) + max(s - (K + w), 0.0))(
-                        max(abs(K2 - K), max(0.5, K * 0.05))
-                    )
-                ),
-                strike2_factor=1.0,
-                strike_lines_override=lambda K, K2: [
-                    K - max(abs(K2 - K), max(0.5, K * 0.05)),
-                    K,
-                    K + max(abs(K2 - K), max(0.5, K * 0.05)),
-                ],
+            k_center = st.slider(
+                "Strike central (iron butterfly)",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("iron_bfly_center"),
             )
-            _flag_ib = st.session_state.get(_k("run_iron_bfly_done"), False)
-            if not _flag_ib:
-                if st.button("🚀 Lancer le pricing Iron Butterfly", key=_k("run_iron_bfly_btn"), type="primary"):
-                    st.session_state[_k("run_iron_bfly_done")] = True
-                    _flag_ib = True
-            if _flag_ib:
-                _render_structure_panel("Iron Butterfly")
+            wing = st.slider(
+                "Écart ailes",
+                min_value=max(0.1, 0.02 * float(common_spot_value)),
+                max_value=max(1.0, 0.5 * float(common_spot_value)),
+                value=max(0.5, 0.05 * float(common_spot_value)),
+                step=0.1,
+                key=_k("iron_bfly_wing"),
+            )
+            k_put_long = max(0.01, k_center - wing)
+            k_call_long = k_center + wing
+
+            view_dyn = view_iron_butterfly(
+                float(common_spot_value),
+                k_put_long,
+                k_center,
+                k_call_long,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Iron Butterfly (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("iron_bfly_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("iron_bfly_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("iron_bfly_side_inline"))
+            st.caption(f"K_put_long: {k_put_long:.4f} | K_centre: {k_center:.4f} | K_call_long: {k_call_long:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("iron_bfly_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "call" if option_char.lower() == "c" else "put",
+                    "product_type": "Iron Butterfly",
+                    "type": "Iron Butterfly",
+                    "strike": float(k_put_long),
+                    "strike2": float(k_call_long),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "put", "strike": float(k_put_long)},
+                        {"option_type": "put", "strike": float(k_center)},
+                        {"option_type": "call", "strike": float(k_center)},
+                        {"option_type": "call", "strike": float(k_call_long)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Iron butterfly",
+                        "legs": [
+                            {"option_type": "put", "strike": float(k_put_long)},
+                            {"option_type": "put", "strike": float(k_center)},
+                            {"option_type": "call", "strike": float(k_center)},
+                            {"option_type": "call", "strike": float(k_call_long)},
+                        ],
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Iron butterfly ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_calendar:
             _render_option_text("Calendar spread", "calendar_graph")
