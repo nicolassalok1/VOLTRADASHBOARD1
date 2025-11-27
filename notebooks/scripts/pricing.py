@@ -45,7 +45,3 @@ def price_strangle_bs(S: float, k_put: float, k_call: float, r: float = DEFAULT_
 def pricing_strangle_bs(S: float, k_put: float, k_call: float, r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA, T: float = DEFAULT_T) -> float:
     """Alias explicite pour le pricing d'un strangle via Black-Scholes (somme put+call)."""
     return price_strangle_bs(S, k_put, k_call, r=r, q=q, sigma=sigma, T=T)
-
-
-def payoff_strangle(spot: float, k_put: float, k_call: float) -> float:
-    return payoff_put(spot, k_put) + payoff_call(spot, k_call)
