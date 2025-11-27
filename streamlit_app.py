@@ -15,8 +15,8 @@ def _load_module(name: str, path: Path):
 
 
 BASE_DIR = Path(__file__).parent
-SCRIPTS_APP_PATH = BASE_DIR / "scripts" / "streamlit_app.py"
-SOURCES_APP_PATH = BASE_DIR / "streamlit_app3.py"
+SCRIPTS_APP_PATH = BASE_DIR / "scripts" / "sciptsVol" / "utils_functions.py"
+SOURCES_APP_PATH = BASE_DIR / "streamlit_appVol.py"
 GPT_APP_PATH = BASE_DIR / "streamlit_appGPT.py"
 
 st.set_page_config(

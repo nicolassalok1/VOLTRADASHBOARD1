@@ -8,7 +8,7 @@ Une app Streamlit qui regroupe trois modules :
 ## Arborescence
 - `streamlit_app.py` : point d’entrée qui assemble les modules en onglets.
 - `scripts/` : app Volatility Tools.
-- `streamlit_app3.py` et `scripts/sources/` : app RL & Finance Lab + datasets.
+- `streamlit_appVol.py` et `scripts/sources/` : app RL & Finance Lab + datasets.
 - `streamlit_appGPT.py` et `scripts/scriptsGPT/` : app AI Trading Bot + scripts/pricing.
 - `database/` : JSON locaux (portefeuille, options, forwards, etc.).
 - `tests/` : scripts de vérification/fixtures.
