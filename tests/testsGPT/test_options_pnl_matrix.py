@@ -83,12 +83,6 @@ class OptionsPnLMatrixTests(TestCase):
 
     def _save_expired(self, payload):
         return self.api["save_expired_options"](payload)
-    
-    def _log_json(self, label, mapping):
-        print(f"[JSON-{label}] {len(mapping)} entrees")
-        for key, val in mapping.items():
-            print(f"[JSON-{label}] {key} -> status={val.get('status')} "
-                  f"close={val.get('underlying_close')} pnl={val.get('pnl_total')}")
 
     def _expected_pnl(self, opt, spot, mark=None):
         qty = float(opt.get("quantity", 1) or 0.0)
@@ -282,7 +276,6 @@ class OptionsPnLMatrixTests(TestCase):
                     }
                 )
                 closed_payloads[opt_id] = close_entry
-                print(f"[JSON-CLOSE] {opt_id} spot={close_spot} pnl={close_entry.get('pnl_total')}")
             else:
                 exp_spot = spots["atm"]
                 exp_entry = dict(opt)
@@ -295,12 +288,10 @@ class OptionsPnLMatrixTests(TestCase):
                     }
                 )
                 expired_payloads[opt_id] = exp_entry
-                print(f"[JSON-EXPIRE] {opt_id} spot={exp_spot} pnl={exp_entry.get('pnl_total')}")
 
         all_expired = {}
         all_expired.update(closed_payloads)
         all_expired.update(expired_payloads)
         self._save_expired(all_expired)
-        self._log_json("WRITE", all_expired)
         loaded_expired = self._expired()
         self.assertEqual(len(loaded_expired), len(all_expired))
