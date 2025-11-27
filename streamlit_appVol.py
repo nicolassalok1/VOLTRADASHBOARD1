@@ -16,16 +16,18 @@ from scipy.optimize import minimize
 from wordcloud import WordCloud
 
 BASE_DIR = Path(__file__).parent
-# Data and helper modules now live under scripts/sources.
-SOURCES_DIR = BASE_DIR / "scripts" / "sources"
+# Data and helper modules now live under scripts/scriptsRL; datasets live in database/RLtab/.
+SOURCES_DIR = BASE_DIR / "scripts" / "scriptsRL"
+DATA_DIR = BASE_DIR / "database" / "RLtab"
 RL4F_BASE = SOURCES_DIR / "rl4f"
 RL4F_DIRS = [
     RL4F_BASE / "trading_dql",
     RL4F_BASE / "hedging_dql",
     RL4F_BASE / "allocation_3ac",
 ]
+DATA_ROOTS = [path for path in [SOURCES_DIR, DATA_DIR] if path.exists()]
 NEXT_DATA_DIRS = sorted(
-    [path for path in SOURCES_DIR.rglob("data") if path.is_dir()],
+    [path for root in DATA_ROOTS for path in root.rglob("data") if path.is_dir()],
     key=lambda p: str(p),
 )
 for path in RL4F_DIRS:
@@ -70,9 +72,10 @@ def load_next_csv(name, parse_dates=None):
         candidate = data_dir / name
         if candidate.exists():
             candidates.append(candidate)
-    fallback = SOURCES_DIR / name
-    if fallback.exists():
-        candidates.append(fallback)
+    for root in DATA_ROOTS:
+        fallback = root / name
+        if fallback.exists():
+            candidates.append(fallback)
     if not candidates:
         raise FileNotFoundError(
             f"Fichier manquant : {name} (cherché dans {SOURCES_DIR})"

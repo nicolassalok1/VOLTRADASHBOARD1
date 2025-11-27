@@ -8,9 +8,10 @@ Une app Streamlit qui regroupe trois modules :
 ## Arborescence
 - `streamlit_app.py` : point d’entrée qui assemble les modules en onglets.
 - `scripts/` : app Volatility Tools.
-- `streamlit_appVol.py` et `scripts/sources/` : app RL & Finance Lab + datasets.
+- `streamlit_appVol.py` et `database/RLtab/` : app RL & Finance Lab + datasets.
 - `streamlit_appGPT.py` et `scripts/scriptsGPT/` : app AI Trading Bot + scripts/pricing.
-- `database/` : JSON locaux (portefeuille, options, forwards, etc.).
+- `database/GPTab/` : datasets de l’onglet Volatility/Trading.
+- `database/jsons/` : stockage local (portefeuille, options, forwards…).
 - `tests/` : scripts de vérification/fixtures.
 
 ## Installation
@@ -31,8 +32,9 @@ Onglets disponibles : Volatility Tools / RL & Finance Lab / AI Trading Bot.
 - `HTTP_PROXY` / `HTTPS_PROXY` : si nécessaire derrière un proxy.
 
 ## Données locales
-- Les portefeuilles/options/forwards sont stockés dans `database/*.json`. Ils sont créés/écrasés par l’UI.
-- Les jeux de données RL/quant sont dans `scripts/sources/` (sous-dossiers data).
+- Les portefeuilles/options/forwards sont stockés dans `database/jsons/`. Ils sont créés/écrasés par l’UI.
+- Les jeux de données RL/quant sont dans `database/RLtab/` (sous-dossiers data). Les notebooks ont été déplacés sous `notebooks/`.
+- Les datasets Trading/IV sont dans `database/GPTab/`.
 
 ## Notes
 - L’app charge des dépendances lourdes (torch, tensorflow, plotly…). Prévois quelques minutes d’installation.

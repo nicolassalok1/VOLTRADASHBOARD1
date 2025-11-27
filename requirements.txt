@@ -1,30 +1,21 @@
 # Core & utilities
 numpy
 pandas
-pandas-datareader
 python-dotenv
 requests
 
 # Finance & data APIs
 alpaca-trade-api
-alpha_vantage==2.3.1
-fredapi
-ibapi
-quandl
 yfinance
 
 # Visualization
 matplotlib
 plotly
 seaborn
-statsmodels
 wordcloud
 
 # Machine Learning / DL
-keras
 numba
-scikeras
-scikit-learn
 scipy
 tensorflow
 torch
@@ -33,7 +24,5 @@ torch
 streamlit
 websockets>=14.0
 
-# Notebook / misc tooling
-IPython
-ipywidgets
+# AI assistant
 openai

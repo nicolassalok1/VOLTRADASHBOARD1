@@ -3,7 +3,7 @@ Streamlit-based trading and options pricing dashboard.
 
 Responsibilities:
 - Render the multi-tab UI (dashboard, trading systems, forwards, options pricing).
-- Persist portfolios/systems/options in local JSON files under ./database.
+- Persist portfolios/systems/options in local JSON files under ./database/jsons.
 - Call external services: Alpaca (positions/orders/prices), yfinance (price history),
   OpenAI ChatGPT, CBOE, and various pricing libraries (torch, tensorflow, scipy, etc.).
 
@@ -45,26 +45,26 @@ import re
 
 # Configuration
 APP_DIR = Path(__file__).resolve().parent
-DB_DIR = APP_DIR / "database"
-DB_DIR.mkdir(exist_ok=True)
+JSON_DIR = APP_DIR / "database" / "jsons"
+JSON_DIR.mkdir(parents=True, exist_ok=True)
 # Scripts/pricing now sous scripts/scriptsGPT
 SCRIPTS_DIR = APP_DIR / "scripts" / "scriptsGPT"
 PRICING_DIR = SCRIPTS_DIR / "pricing_scripts"
-DATASETS_DIR = DB_DIR / "data"
-DATASETS_DIR.mkdir(exist_ok=True)
+DATASETS_DIR = APP_DIR / "database" / "GPTab"
+DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
 from rates_utils import get_r, get_q
-DATA_FILE = DB_DIR / "equities.json"
-PORTFOLIO_FILE = DB_DIR / "portfolio.json"
-SELL_SYSTEMS_FILE = DB_DIR / "sell_systems.json"
-OPTIONS_BOOK_FILE = DB_DIR / "options_portfolio.json"
-OPTIONS_BOOK_FILE_LEGACY = DB_DIR / "options_book.json"
+DATA_FILE = JSON_DIR / "equities.json"
+PORTFOLIO_FILE = JSON_DIR / "portfolio.json"
+SELL_SYSTEMS_FILE = JSON_DIR / "sell_systems.json"
+OPTIONS_BOOK_FILE = JSON_DIR / "options_portfolio.json"
+OPTIONS_BOOK_FILE_LEGACY = JSON_DIR / "options_book.json"
 OPTIONS_PORTFOLIO_FILE = OPTIONS_BOOK_FILE  # legacy name kept for compatibility
 EXPIRED_OPTIONS_FILE = OPTIONS_BOOK_FILE    # legacy name kept for compatibility
-CUSTOM_OPTIONS_FILE = DB_DIR / "custom_options.json"
-FORWARDS_FILE = DB_DIR / "forwards.json"
-LEGACY_EXPIRED_FILE = DB_DIR / "expired_options.json"
+CUSTOM_OPTIONS_FILE = JSON_DIR / "custom_options.json"
+FORWARDS_FILE = JSON_DIR / "forwards.json"
+LEGACY_EXPIRED_FILE = JSON_DIR / "expired_options.json"
 load_dotenv()
 
 
@@ -2267,7 +2267,7 @@ def run_app_options():
         interval = st.selectbox("Intervalle", ["1d", "1h"], index=0, key=_k("corr_interval"))
 
         st.caption(
-            "Le calcul de corrélation utilise les prix de clôture présents dans database/data/closing_prices.csv (régénéré via yfinance). "
+            "Le calcul de corrélation utilise les prix de clôture présents dans database/GPTab/closing_prices.csv (régénéré via yfinance). "
             "En cas d'échec, une matrice de corrélation inventée sera utilisée."
         )
         regen_csv = st.button("Mettre à jour la Matrice de Corrélation", key=_k("btn_regen_closing"))
@@ -2277,7 +2277,7 @@ def run_app_options():
                 closing_path.parent.mkdir(parents=True, exist_ok=True)
                 prices_df_cached.to_csv(closing_path, index=False)
                 csv_tickers = [c for c in prices_df_cached.columns if str(c).lower() != "date"]
-                st.info(f"database/data/closing_prices.csv généré via yfinance ({len(prices_df_cached)} lignes)")
+                st.info(f"database/GPTab/closing_prices.csv généré via yfinance ({len(prices_df_cached)} lignes)")
                 if csv_tickers:
                     st.session_state["basket_tickers"] = _normalize_tickers(csv_tickers)
                     tickers = st.session_state["basket_tickers"]
@@ -2289,12 +2289,12 @@ def run_app_options():
             if prices_df_cached is None:
                 prices_df_cached, _ = load_closing_prices_with_tickers(closing_path)
             if prices_df_cached is None:
-                raise FileNotFoundError("Impossible de charger database/data/closing_prices.csv.")
+                raise FileNotFoundError("Impossible de charger database/GPTab/closing_prices.csv.")
             corr_df = compute_corr_from_prices(prices_df_cached)
             st.success(f"Corrélation calculée à partir de {closing_path.name}")
             st.dataframe(corr_df)
         except Exception as exc:
-            st.warning(f"Impossible de calculer la corrélation depuis database/data/closing_prices.csv : {exc}")
+            st.warning(f"Impossible de calculer la corrélation depuis database/GPTab/closing_prices.csv : {exc}")
             corr_df = pd.DataFrame(
                 [
                     [1.0, 0.6, 0.4],
