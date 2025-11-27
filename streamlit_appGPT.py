@@ -85,6 +85,7 @@ from pricing import (
     view_condor,
     view_diagonal_spread,
     view_digital,
+    view_forward_start,
     view_iron_butterfly,
     view_iron_condor,
     view_put_spread,
@@ -6081,44 +6082,392 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_digital:
-            _render_option_text("Digital (cash-or-nothing)", "digital_graph")
-            _flag_dig = st.session_state.get(_k("run_digital_done"), False)
-            if not _flag_dig:
-                if st.button("🚀 Lancer le pricing Digital", key=_k("run_digital_btn"), type="primary"):
-                    st.session_state[_k("run_digital_done")] = True
-                    _flag_dig = True
-            if _flag_dig:
-                _render_structure_panel("Digital (cash-or-nothing)")
+            strike = st.slider(
+                "Strike",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("digital_k"),
+            )
+            opt_type = "call" if option_char.lower() == "c" else "put"
+            view_dyn = view_digital(
+                float(common_spot_value),
+                strike,
+                T=float(common_maturity_value),
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                option_type=opt_type,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Digital (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("digital_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("digital_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("digital_side_inline"))
+            st.caption(f"K: {strike:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("digital_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": opt_type,
+                    "product_type": "Digital",
+                    "type": "Digital",
+                    "strike": float(strike),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": opt_type, "strike": float(strike), "payout": 1.0, "digital": True},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Digital",
+                        "strike": float(strike),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Digital ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_asset_on:
-            _render_option_text("Asset-or-nothing", "asset_on_graph")
-            _flag_asset = st.session_state.get(_k("run_asset_on_done"), False)
-            if not _flag_asset:
-                if st.button("🚀 Lancer le pricing Asset-or-nothing", key=_k("run_asset_on_btn"), type="primary"):
-                    st.session_state[_k("run_asset_on_done")] = True
-                    _flag_asset = True
-            if _flag_asset:
-                _render_structure_panel("Asset-or-nothing")
+            strike = st.slider(
+                "Strike",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("asset_on_k"),
+            )
+            opt_type = "call" if option_char.lower() == "c" else "put"
+            view_dyn = view_asset_or_nothing(
+                float(common_spot_value),
+                strike,
+                T=float(common_maturity_value),
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                option_type=opt_type,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Asset-or-nothing (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("asset_on_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("asset_on_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("asset_on_side_inline"))
+            st.caption(f"K: {strike:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("asset_on_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": opt_type,
+                    "product_type": "Asset-or-nothing",
+                    "type": "Asset-or-nothing",
+                    "strike": float(strike),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": opt_type, "strike": float(strike), "asset_or_nothing": True},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Asset-or-nothing",
+                        "strike": float(strike),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Asset-or-nothing ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_forward_start:
-            _render_option_text("Forward-start (approx payoff)", "forward_start_graph")
-            run_flag = st.session_state.get(_k("run_path_forward_done"), False)
-            if not run_flag:
-                if st.button("🚀 Lancer tous les pricings Forward-start", key=_k("run_path_forward_btn"), type="primary"):
-                    st.session_state[_k("run_path_forward_done")] = True
-                    st.rerun()
-            else:
-                _render_structure_panel("Forward-start option")
+            spot_start = st.slider(
+                "Spot de départ (S_start)",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("forward_start_s_start"),
+            )
+            m_factor = st.slider(
+                "Multiplicateur m (strike = m * S_start)",
+                min_value=0.5,
+                max_value=1.5,
+                value=1.0,
+                step=0.05,
+                key=_k("forward_start_m"),
+            )
+            opt_type = "call" if option_char.lower() == "c" else "put"
+            view_dyn = view_forward_start(
+                float(common_spot_value),
+                spot_start,
+                m=m_factor,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+                option_type=opt_type,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Forward-start (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("forward_start_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("forward_start_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("forward_start_side_inline"))
+            st.caption(f"S_start: {spot_start:.4f} | m: {m_factor:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("forward_start_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": opt_type,
+                    "product_type": "Forward-start",
+                    "type": "Forward-start",
+                    "strike": float(m_factor * spot_start),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": opt_type, "strike": float(m_factor * spot_start), "forward_start": True, "S_start": float(spot_start), "m": float(m_factor)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Forward-start",
+                        "spot_start": float(spot_start),
+                        "m_factor": float(m_factor),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Forward-start ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_chooser:
-            _render_option_text("Chooser option", "chooser_graph")
-            _flag_chooser = st.session_state.get(_k("run_chooser_done"), False)
-            if not _flag_chooser:
-                if st.button("🚀 Lancer le pricing Chooser", key=_k("run_chooser_btn"), type="primary"):
-                    st.session_state[_k("run_chooser_done")] = True
-                    _flag_chooser = True
-            if _flag_chooser:
-                _render_structure_panel("Chooser option")
+            strike = st.slider(
+                "Strike",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("chooser_k"),
+            )
+            view_dyn = view_chooser(
+                float(common_spot_value),
+                strike,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Chooser (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("chooser_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("chooser_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("chooser_side_inline"))
+            st.caption(f"K: {strike:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("chooser_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": "chooser",
+                    "product_type": "Chooser",
+                    "type": "Chooser",
+                    "strike": float(strike),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": "chooser", "strike": float(strike)},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Chooser",
+                        "strike": float(strike),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Chooser ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_straddle:
             strike_slider = st.slider(
@@ -6981,24 +7330,233 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 _render_structure_panel("Cliquet / Ratchet (MC)")
 
         with tab_quanto:
-            _render_option_text("Quanto option", "quanto_graph")
-            _flag_quanto = st.session_state.get(_k("run_quanto_done"), False)
-            if not _flag_quanto:
-                if st.button("🚀 Lancer le pricing Quanto", key=_k("run_quanto_btn"), type="primary"):
-                    st.session_state[_k("run_quanto_done")] = True
-                    _flag_quanto = True
-            if _flag_quanto:
-                _render_structure_panel("Quanto option")
+            strike = st.slider(
+                "Strike",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("quanto_k"),
+            )
+            fx_rate = st.slider(
+                "Taux FX (payout)",
+                min_value=0.5,
+                max_value=2.0,
+                value=1.0,
+                step=0.05,
+                key=_k("quanto_fx"),
+            )
+            opt_type = "call" if option_char.lower() == "c" else "put"
+            view_dyn = view_quanto(
+                float(common_spot_value),
+                strike,
+                fx_rate=fx_rate,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+                option_type=opt_type,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Quanto (payoff & P&L avec prime BS)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("quanto_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("quanto_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("quanto_side_inline"))
+            st.caption(f"K: {strike:.4f} | FX: {fx_rate:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("quanto_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": opt_type,
+                    "product_type": "Quanto",
+                    "type": "Quanto",
+                    "strike": float(strike),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": opt_type, "strike": float(strike), "fx_rate": float(fx_rate), "quanto": True},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Quanto",
+                        "strike": float(strike),
+                        "fx_rate": float(fx_rate),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Quanto ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_rainbow:
-            _render_option_text("Rainbow option", "rainbow_graph")
-            _flag_rainbow = st.session_state.get(_k("run_rainbow_done"), False)
-            if not _flag_rainbow:
-                if st.button("🚀 Lancer le pricing Rainbow", key=_k("run_rainbow_btn"), type="primary"):
-                    st.session_state[_k("run_rainbow_done")] = True
-                    _flag_rainbow = True
-            if _flag_rainbow:
-                _render_structure_panel("Rainbow option")
+            strike = st.slider(
+                "Strike",
+                min_value=0.5 * float(common_spot_value),
+                max_value=1.5 * float(common_spot_value),
+                value=float(common_spot_value),
+                step=0.5,
+                key=_k("rainbow_k"),
+            )
+            ticker_b = st.text_input(
+                "Ticker second sous-jacent (CBOE)",
+                value=st.session_state.get(_k("rainbow_ticker_b"), ""),
+                key=_k("rainbow_ticker_b_input"),
+            )
+            if st.button("📡 Récupérer le spot CBOE (B)", key=_k("rainbow_fetch_b")) and ticker_b.strip():
+                t_b = ticker_b.strip().upper()
+                try:
+                    _, _, spot_b_cboe, _, _ = load_cboe_data(t_b)
+                    st.session_state[_k("rainbow_s0b_cboe")] = float(spot_b_cboe)
+                    st.session_state[_k("rainbow_ticker_b")] = t_b
+                    st.success(f"Spot CBOE pour {t_b} : {float(spot_b_cboe):.4f}")
+                except Exception as exc:
+                    st.error(f"Impossible de récupérer le spot CBOE pour {t_b} : {exc}")
+
+            spot_b_default = st.session_state.get(_k("rainbow_s0b_cboe"), float(common_spot_value))
+            spot_b = st.slider(
+                "Spot second sous-jacent (modifiable)",
+                min_value=0.5 * float(spot_b_default),
+                max_value=1.5 * float(spot_b_default),
+                value=float(spot_b_default),
+                step=0.5,
+                key=_k("rainbow_s0b"),
+            )
+            opt_type = "call" if option_char.lower() == "c" else "put"
+            view_dyn = view_rainbow(
+                float(common_spot_value),
+                float(spot_b),
+                strike,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+                option_type=opt_type,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff brut")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot (sous-jacent principal)")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title("Rainbow (payoff & P&L avec prime BS approximative)")
+            ax.legend(loc="lower right")
+            st.pyplot(fig, clear_figure=True)
+
+            st.session_state[_k("rainbow_pre_price")] = premium
+            price = float(premium)
+
+            st.markdown("### Ajouter au dashboard")
+            st.metric("Prix calculé", f"${price:.6f}")
+
+            underlying = (
+                st.session_state.get("heston_cboe_ticker")
+                or st.session_state.get("tkr_common")
+                or st.session_state.get("common_underlying")
+                or st.session_state.get("ticker_default")
+                or ""
+            ).strip().upper()
+            st.caption(f"Sous-jacent A: {underlying or 'N/A'} (reprise de l'entête)")
+            st.caption(
+                f"Sous-jacent B: {(st.session_state.get(_k('rainbow_ticker_b'), 'N/A') or 'N/A').upper()} | Spot: {spot_b:.4f}"
+            )
+            today = datetime.date.today()
+            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("rainbow_qty_inline"))
+            side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("rainbow_side_inline"))
+            st.caption(f"K: {strike:.4f}")
+            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+
+            if st.button("Ajouter au dashboard", key=_k("rainbow_add_inline")):
+                payload = {
+                    "underlying": underlying or "N/A",
+                    "option_type": opt_type,
+                    "product_type": "Rainbow",
+                    "type": "Rainbow",
+                    "strike": float(strike),
+                    "expiration": expiration_dt.isoformat(),
+                    "quantity": int(qty),
+                    "avg_price": price,
+                    "side": side,
+                    "S0": float(common_spot_value),
+                    "maturity_years": common_maturity_value,
+                    "legs": [
+                        {"option_type": opt_type, "strike": float(strike), "secondary_spot": float(spot_b), "rainbow": True},
+                    ],
+                    "T_0": today.isoformat(),
+                    "price": price,
+                    "misc": {
+                        "structure": "Rainbow",
+                        "strike": float(strike),
+                        "secondary_spot": float(spot_b),
+                        "spot_at_pricing": float(common_spot_value),
+                    },
+                }
+                try:
+                    st.caption(f"[LOG] Écriture vers options_portfolio.json avec payload: {payload}")
+                    print(f"[options] add_to_dashboard payload={payload}")
+                    option_id = add_option_to_dashboard(payload)
+                    st.success(
+                        f"Rainbow ajouté au dashboard (id: {option_id}) "
+                        f"et enregistré dans options_portfolio.json."
+                    )
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as exc:  # pragma: no cover - UI feedback
+                    st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
     tab_call, tab_put = st.tabs(["Call", "Put"])
     for _label, _tab in (("Call", tab_call), ("Put", tab_put)):
