@@ -57,11 +57,25 @@ JSON_DIR.mkdir(parents=True, exist_ok=True)
 # Scripts/pricing now sous scripts/scriptsGPT
 SCRIPTS_DIR = APP_DIR / "scripts" / "scriptsGPT"
 PRICING_DIR = SCRIPTS_DIR / "pricing_scripts"
+NOTEBOOKS_SCRIPTS_DIR = APP_DIR / "notebooks" / "scripts"
 DATASETS_DIR = APP_DIR / "database" / "GPTab"
 DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
+sys.path.insert(0, str(NOTEBOOKS_SCRIPTS_DIR))
 from rates_utils import get_r, get_q
+from pricing import (
+    bs_price_call,
+    bs_price_put,
+    price_butterfly_bs,
+    price_call_spread_bs,
+    price_condor_bs,
+    price_iron_butterfly_bs,
+    price_iron_condor_bs,
+    price_put_spread_bs,
+    price_straddle_bs,
+    price_strangle_bs,
+)
 DATA_FILE = JSON_DIR / "equities.json"
 PORTFOLIO_FILE = JSON_DIR / "portfolio.json"
 SELL_SYSTEMS_FILE = JSON_DIR / "sell_systems.json"
@@ -6759,6 +6773,15 @@ def mark_option_market_value(option: dict, chain_entry: dict | None = None) -> t
     sigma = float(option.get("sigma", 0.2) or 0.2)
     option_type = (option.get("option_type") or option.get("type") or "").lower()
     strike = float(option.get("strike", 0.0) or 0.0)
+    strike2 = float(option.get("strike2", option.get("strike_upper", 0.0) or 0.0) or 0.0)
+    product = (
+        option.get("product_type")
+        or option.get("product")
+        or option.get("structure")
+        or option.get("type")
+        or ""
+    ).lower()
+    legs = option.get("legs") or []
     q_val = 0.0
 
     T_years = None
@@ -6770,14 +6793,19 @@ def mark_option_market_value(option: dict, chain_entry: dict | None = None) -> t
         T_years = None
 
     try:
-        q_val = float(get_q(underlying) or 0.0) if underlying else 0.0
+        q_val = float(get_q(underlying) or option.get("q") or 0.0) if underlying else float(option.get("q", 0.0) or 0.0)
     except Exception:
-        q_val = 0.0
+        q_val = float(option.get("q", 0.0) or 0.0)
 
     if chain_entry:
         spot = float(chain_entry.get("spot", spot) or spot)
         sigma = float(chain_entry.get("iv", sigma) or sigma)
         T_years = float(chain_entry.get("T", T_years) or (T_years or 0.0))
+
+    try:
+        r_val = float(get_r(T_years) or option.get("r") or 0.0) if T_years else float(option.get("r", 0.0) or 0.0)
+    except Exception:
+        r_val = float(option.get("r", 0.0) or 0.0)
 
     mark_price = None
     method = "intrinsic"
@@ -6820,12 +6848,162 @@ def mark_option_market_value(option: dict, chain_entry: dict | None = None) -> t
         except Exception:
             mark_price = None
 
+    def _bs_price_from_legs() -> float | None:
+        if not legs:
+            return None
+        total = 0.0
+        used = False
+        for leg in legs:
+            try:
+                leg_type = str(leg.get("option_type", "")).lower()
+                k_leg = float(leg.get("strike", 0.0) or 0.0)
+                t_leg = float(leg.get("tenor", T_years if T_years is not None else 0.0) or 0.0)
+                sigma_leg = float(leg.get("sigma", sigma) or sigma)
+                qty_leg = float(leg.get("qty", leg.get("quantity", 1.0)) or 1.0)
+                side_mult = -1.0 if str(leg.get("side", "long")).lower() == "short" else 1.0
+                if spot <= 0 or k_leg <= 0 or t_leg <= 0:
+                    continue
+                used = True
+                if leg_type == "put":
+                    leg_price = bs_price_put(spot, k_leg, r=r_val, q=q_val, sigma=sigma_leg, T=t_leg)
+                else:
+                    leg_price = bs_price_call(spot, k_leg, r=r_val, q=q_val, sigma=sigma_leg, T=t_leg)
+                total += side_mult * qty_leg * leg_price
+            except Exception:
+                continue
+        return total if used else None
+
+    if mark_price is None and spot > 0 and T_years is not None and T_years > 0:
+        prod_low = product
+        sigma_eff = max(sigma, 1e-6)
+        try:
+            if "straddle" in prod_low and strike > 0:
+                mark_price = price_straddle_bs(spot, strike, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                method = "pricing.py straddle (BS)"
+            elif "strangle" in prod_low:
+                k_put = strike if strike > 0 else None
+                k_call = strike2 if strike2 > 0 else None
+                for leg in legs:
+                    leg_type = str(leg.get("option_type", "")).lower()
+                    if leg_type == "put" and leg.get("strike") is not None:
+                        k_put = float(leg.get("strike") or k_put or 0.0)
+                    if leg_type == "call" and leg.get("strike") is not None:
+                        k_call = float(leg.get("strike") or k_call or 0.0)
+                if k_put and k_call:
+                    if k_put > k_call:
+                        k_put, k_call = k_call, k_put
+                    mark_price = price_strangle_bs(spot, k_put, k_call, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                    method = "pricing.py strangle (BS)"
+            elif "call spread" in prod_low:
+                k_long = strike if strike > 0 else None
+                k_short = strike2 if strike2 > 0 else None
+                for leg in legs:
+                    if str(leg.get("option_type", "")).lower() != "call":
+                        continue
+                    s_leg = str(leg.get("side", "long")).lower()
+                    if s_leg == "long" and leg.get("strike") is not None:
+                        k_long = float(leg.get("strike") or k_long or 0.0)
+                    if s_leg == "short" and leg.get("strike") is not None:
+                        k_short = float(leg.get("strike") or k_short or 0.0)
+                if k_long and k_short:
+                    mark_price = price_call_spread_bs(spot, k_long, k_short, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                    method = "pricing.py call spread (BS)"
+            elif "put spread" in prod_low:
+                k_long = strike if strike > 0 else None
+                k_short = strike2 if strike2 > 0 else None
+                for leg in legs:
+                    if str(leg.get("option_type", "")).lower() != "put":
+                        continue
+                    s_leg = str(leg.get("side", "long")).lower()
+                    if s_leg == "long" and leg.get("strike") is not None:
+                        k_long = float(leg.get("strike") or k_long or 0.0)
+                    if s_leg == "short" and leg.get("strike") is not None:
+                        k_short = float(leg.get("strike") or k_short or 0.0)
+                if k_long and k_short:
+                    mark_price = price_put_spread_bs(spot, k_long, k_short, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                    method = "pricing.py put spread (BS)"
+            elif "butterfly" in prod_low and "iron" not in prod_low:
+                strikes = sorted({float(leg.get("strike")) for leg in legs if leg and leg.get("strike") is not None})
+                if len(strikes) >= 3:
+                    k1, k2, k3 = strikes[0], strikes[1], strikes[-1]
+                elif strike > 0 and strike2 > 0:
+                    k1, k3 = strike, strike2
+                    k2 = (k1 + k3) / 2.0
+                else:
+                    k1 = k2 = k3 = 0.0
+                if k1 and k2 and k3:
+                    mark_price = price_butterfly_bs(spot, k1, k2, k3, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                    method = "pricing.py butterfly (BS)"
+            elif "condor" in prod_low and "iron" not in prod_low:
+                strikes = sorted({float(leg.get("strike")) for leg in legs if leg and leg.get("strike") is not None})
+                if len(strikes) >= 4:
+                    k1, k2, k3, k4 = strikes[0], strikes[1], strikes[2], strikes[-1]
+                    mark_price = price_condor_bs(spot, k1, k2, k3, k4, r=r_val, q=q_val, sigma=sigma_eff, T=T_years)
+                    method = "pricing.py condor (BS)"
+            elif "iron butterfly" in prod_low:
+                k_put_long = None
+                k_center = None
+                k_call_long = None
+                for leg in legs:
+                    ltype = str(leg.get("option_type", "")).lower()
+                    side_leg = str(leg.get("side", "long")).lower()
+                    if ltype == "put" and side_leg == "long" and leg.get("strike") is not None:
+                        k_put_long = float(leg.get("strike"))
+                    elif ltype == "call" and side_leg == "long" and leg.get("strike") is not None:
+                        k_call_long = float(leg.get("strike"))
+                    elif side_leg == "short" and leg.get("strike") is not None:
+                        k_center = float(leg.get("strike"))
+                if not k_center and strike > 0:
+                    k_center = strike
+                if k_put_long and k_call_long and k_center:
+                    mark_price = price_iron_butterfly_bs(
+                        spot,
+                        k_put_long,
+                        k_center,
+                        k_call_long,
+                        r=r_val,
+                        q=q_val,
+                        sigma=sigma_eff,
+                        T=T_years,
+                    )
+                    method = "pricing.py iron butterfly (BS)"
+            elif "iron condor" in prod_low:
+                k_put_long = k_put_short = k_call_short = k_call_long = None
+                for leg in legs:
+                    ltype = str(leg.get("option_type", "")).lower()
+                    side_leg = str(leg.get("side", "long")).lower()
+                    if ltype == "put" and side_leg == "long" and leg.get("strike") is not None:
+                        k_put_long = float(leg.get("strike"))
+                    elif ltype == "put" and side_leg == "short" and leg.get("strike") is not None:
+                        k_put_short = float(leg.get("strike"))
+                    elif ltype == "call" and side_leg == "short" and leg.get("strike") is not None:
+                        k_call_short = float(leg.get("strike"))
+                    elif ltype == "call" and side_leg == "long" and leg.get("strike") is not None:
+                        k_call_long = float(leg.get("strike"))
+                if all(v is not None for v in [k_put_long, k_put_short, k_call_short, k_call_long]):
+                    mark_price = price_iron_condor_bs(
+                        spot,
+                        k_put_long,
+                        k_put_short,
+                        k_call_short,
+                        k_call_long,
+                        r=r_val,
+                        q=q_val,
+                        sigma=sigma_eff,
+                        T=T_years,
+                    )
+                    method = "pricing.py iron condor (BS)"
+        except Exception:
+            mark_price = None
+
+    if mark_price is None:
+        leg_price = _bs_price_from_legs()
+        if leg_price is not None:
+            mark_price = leg_price
+            method = "pricing.py legs (BS sum)"
+
     # BSM fallback
     if mark_price is None and spot > 0 and strike > 0 and T_years is not None and option_type in {"call", "put"}:
-        try:
-            r_val = float(get_r(T_years) or 0.0)
-        except Exception:
-            r_val = 0.0
         mark_price = black_scholes_price(
             S=spot,
             K=strike,
