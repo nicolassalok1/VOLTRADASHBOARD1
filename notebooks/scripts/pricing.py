@@ -228,3 +228,286 @@ def view_iron_condor(s0: float, k_put_long: float, k_put_short: float, k_call_sh
     credit = -premium
     be_low, be_high = k_put_short - credit, k_call_short + credit
     return _build_view(payoff_iron_condor, premium, s0, (k_put_long, k_put_short, k_call_short, k_call_long), (be_low, be_high), span, n)
+
+
+# --- Exotic / path-dependent (simplified pedagogical views) ---
+
+def _find_breakevens_from_grid(s_grid: np.ndarray, pnl_grid: np.ndarray) -> Tuple[float, ...]:
+    roots = []
+    signs = np.sign(pnl_grid)
+    for i in range(len(s_grid) - 1):
+        if signs[i] == 0:
+            roots.append(float(s_grid[i]))
+        if signs[i] * signs[i + 1] < 0:
+            s1, s2 = s_grid[i], s_grid[i + 1]
+            p1, p2 = pnl_grid[i], pnl_grid[i + 1]
+            if p2 != p1:
+                s_root = s1 - p1 * (s2 - s1) / (p2 - p1)
+            else:
+                s_root = s1
+            roots.append(float(s_root))
+    return tuple(sorted(set(round(r, 6) for r in roots)))
+
+
+def payoff_digital(spot, strike: float, option_type: str = "call", payout: float = 1.0):
+    s = np.asarray(spot, dtype=float)
+    if option_type == "put":
+        return payout * (s < strike)
+    return payout * (s > strike)
+
+
+def price_digital_bs(S: float, K: float, T: float = DEFAULT_T, r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA, option_type: str = "call", payout: float = 1.0) -> float:
+    if S <= 0 or K <= 0 or sigma <= 0 or T <= 0:
+        return 0.0
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    df_r = math.exp(-r * T)
+    if option_type == "put":
+        return payout * df_r * _norm_cdf(-d2)
+    return payout * df_r * _norm_cdf(d2)
+
+
+def view_digital(s0: float, strike: float, T: float = DEFAULT_T, **kwargs):
+    premium = price_digital_bs(s0, strike, T=T, **kwargs)
+    s_grid = np.linspace(s0 * 0.5, s0 * 1.5, 300)
+    payoff_grid = payoff_digital(s_grid, strike, option_type=kwargs.get("option_type", "call"), payout=kwargs.get("payout", 1.0))
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_asset_or_nothing(spot, strike: float, option_type: str = "call"):
+    s = np.asarray(spot, dtype=float)
+    return s * (s > strike) if option_type == "call" else s * (s < strike)
+
+
+def price_asset_or_nothing_bs(S: float, K: float, T: float = DEFAULT_T, r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA, option_type: str = "call") -> float:
+    if S <= 0 or K <= 0 or sigma <= 0 or T <= 0:
+        return 0.0
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    if option_type == "put":
+        return S * math.exp(-q * T) * _norm_cdf(-d1)
+    return S * math.exp(-q * T) * _norm_cdf(d1)
+
+
+def view_asset_or_nothing(s0: float, strike: float, T: float = DEFAULT_T, **kwargs):
+    premium = price_asset_or_nothing_bs(s0, strike, T=T, **kwargs)
+    s_grid = np.linspace(s0 * 0.5, s0 * 1.5, 300)
+    payoff_grid = payoff_asset_or_nothing(s_grid, strike, option_type=kwargs.get("option_type", "call"))
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_chooser(spot, strike: float):
+    s = np.asarray(spot, dtype=float)
+    return np.abs(s - strike)
+
+
+def price_chooser_bs(S: float, K: float, **kwargs) -> float:
+    return price_straddle_bs(S, K, **kwargs)
+
+
+def view_chooser(s0: float, strike: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = price_chooser_bs(s0, strike, **kwargs)
+    return _build_view(payoff_chooser, premium, s0, (strike,), (), span, n)
+
+
+def payoff_quanto(spot, strike: float, option_type: str = "call", fx_rate: float = 1.0):
+    s = np.asarray(spot, dtype=float)
+    base = np.maximum(s - strike, 0.0) if option_type == "call" else np.maximum(strike - s, 0.0)
+    return fx_rate * base
+
+
+def price_quanto_bs(S: float, K: float, fx_rate: float = 1.0, **kwargs) -> float:
+    # Simplified: price vanilla then convert with fixed FX rate
+    if kwargs.get("option_type", "call") == "put":
+        return fx_rate * bs_price_put(S, K, **{k: v for k, v in kwargs.items() if k in {"r", "q", "sigma", "T"}})
+    return fx_rate * bs_price_call(S, K, **{k: v for k, v in kwargs.items() if k in {"r", "q", "sigma", "T"}})
+
+
+def view_quanto(s0: float, strike: float, span: float = 0.5, n: int = 300, fx_rate: float = 1.0, **kwargs):
+    premium = price_quanto_bs(s0, strike, fx_rate=fx_rate, **kwargs)
+    payoff_fn = lambda s, k: payoff_quanto(s, k, option_type=kwargs.get("option_type", "call"), fx_rate=fx_rate)
+    return _build_view(payoff_fn, premium, s0, (strike,), (), span, n)
+
+
+def payoff_rainbow(spot1, spot2, strike: float, option_type: str = "call"):
+    s1 = np.asarray(spot1, dtype=float)
+    s2 = np.asarray(spot2, dtype=float)
+    best = np.maximum(s1, s2)
+    if option_type == "put":
+        return np.maximum(strike - best, 0.0)
+    return np.maximum(best - strike, 0.0)
+
+
+def view_rainbow(s0: float, s0b: float, strike: float, span: float = 0.5, n: int = 300, **kwargs):
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    s_grid_b = np.linspace(s0b * (1.0 - span), s0b * (1.0 + span), n)
+    payoff_grid = payoff_rainbow(s_grid, s_grid_b, strike, option_type=kwargs.get("option_type", "call"))
+    premium = float(payoff_rainbow(s0, s0b, strike, option_type=kwargs.get("option_type", "call")))
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_asian_arith(avg_price: float, strike: float, option_type: str = "call"):
+    if option_type == "put":
+        return max(strike - avg_price, 0.0)
+    return max(avg_price - strike, 0.0)
+
+
+def price_asian_arith_approx(S: float, K: float, T: float = DEFAULT_T, sigma: float = DEFAULT_SIGMA, r: float = DEFAULT_R, q: float = DEFAULT_Q, option_type: str = "call") -> float:
+    # Turnbull-Wakeman-esque approximation using adjusted sigma and strike
+    sigma_adj = sigma / math.sqrt(3.0)
+    if option_type == "put":
+        return bs_price_put(S, K, r=r, q=q, sigma=sigma_adj, T=T)
+    return bs_price_call(S, K, r=r, q=q, sigma=sigma_adj, T=T)
+
+
+def view_asian_arith(s0: float, strike: float, avg_price: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = price_asian_arith_approx(s0, strike, **kwargs)
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = np.array([payoff_asian_arith(avg_price * (s / s0), strike, option_type=kwargs.get("option_type", "call")) for s in s_grid])
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_asian_geom(avg_price: float, strike: float, option_type: str = "call"):
+    if option_type == "put":
+        return max(strike - avg_price, 0.0)
+    return max(avg_price - strike, 0.0)
+
+
+def price_asian_geom(S: float, K: float, T: float = DEFAULT_T, sigma: float = DEFAULT_SIGMA, r: float = DEFAULT_R, q: float = DEFAULT_Q, option_type: str = "call") -> float:
+    sigma_g = sigma / math.sqrt(3.0)
+    if option_type == "put":
+        return bs_price_put(S, K, r=r, q=q, sigma=sigma_g, T=T)
+    return bs_price_call(S, K, r=r, q=q, sigma=sigma_g, T=T)
+
+
+def view_asian_geom(s0: float, strike: float, avg_price: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = price_asian_geom(s0, strike, **kwargs)
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = np.array([payoff_asian_geom(avg_price * (s / s0), strike, option_type=kwargs.get("option_type", "call")) for s in s_grid])
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_lookback_floating(spot, min_path: float, max_path: float, option_type: str = "call"):
+    s = np.asarray(spot, dtype=float)
+    if option_type == "put":
+        return np.maximum(max_path - s, 0.0)
+    return np.maximum(s - min_path, 0.0)
+
+
+def view_lookback(spot_ref: float, min_path: float, max_path: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = float(payoff_lookback_floating(spot_ref, min_path, max_path, option_type=kwargs.get("option_type", "call")))
+    s_grid = np.linspace(spot_ref * (1.0 - span), spot_ref * (1.0 + span), n)
+    payoff_grid = payoff_lookback_floating(s_grid, min_path, max_path, option_type=kwargs.get("option_type", "call"))
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_lookback_fixed(min_path: float, max_path: float, strike: float, option_type: str = "call"):
+    if option_type == "put":
+        return max(strike - min_path, 0.0)
+    return max(max_path - strike, 0.0)
+
+
+def view_lookback_fixed(spot_ref: float, min_path: float, max_path: float, strike: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = float(payoff_lookback_fixed(min_path, max_path, strike, option_type=kwargs.get("option_type", "call")))
+    s_grid = np.linspace(spot_ref * (1.0 - span), spot_ref * (1.0 + span), n)
+    payoff_grid = np.full_like(s_grid, premium)
+    pnl_grid = payoff_grid - premium
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": ()}
+
+
+def payoff_forward_start(spot_T, spot_start: float, m: float = 1.0, option_type: str = "call"):
+    k_eff = m * spot_start
+    if option_type == "put":
+        return max(k_eff - spot_T, 0.0)
+    return max(spot_T - k_eff, 0.0)
+
+
+def view_forward_start(s0: float, spot_start: float, m: float = 1.0, span: float = 0.5, n: int = 300, **kwargs):
+    premium = float(payoff_forward_start(s0, spot_start, m=m, option_type=kwargs.get("option_type", "call")))
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = np.array([payoff_forward_start(s, spot_start, m=m, option_type=kwargs.get("option_type", "call")) for s in s_grid])
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_cliquet(spot_T, spot_0: float, floor: float = 0.0, cap: float = 0.1):
+    ret = (spot_T - spot_0) / spot_0 if spot_0 else 0.0
+    capped = min(max(ret, floor), cap)
+    return max(capped, 0.0)
+
+
+def view_cliquet(s0: float, floor: float = 0.0, cap: float = 0.1, span: float = 0.5, n: int = 300):
+    premium = payoff_cliquet(s0, s0, floor=floor, cap=cap)
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = np.array([payoff_cliquet(s, s0, floor=floor, cap=cap) for s in s_grid])
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def payoff_barrier(spot, strike: float, barrier: float, option_type: str = "call", direction: str = "up", knock: str = "out", payout: float = 1.0, binary: bool = False):
+    s = np.asarray(spot, dtype=float)
+    hit = (s >= barrier) if direction == "up" else (s <= barrier)
+    if knock == "in" and not hit:
+        return np.zeros_like(s)
+    if knock == "out" and hit:
+        return np.zeros_like(s)
+    if binary:
+        return payout * np.where(hit, 1.0, 0.0)
+    base = np.maximum(s - strike, 0.0) if option_type == "call" else np.maximum(strike - s, 0.0)
+    return base
+
+
+def view_barrier(s0: float, strike: float, barrier: float, direction: str = "up", knock: str = "out", option_type: str = "call", payout: float = 1.0, binary: bool = False, span: float = 0.5, n: int = 300):
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = payoff_barrier(s_grid, strike, barrier, option_type=option_type, direction=direction, knock=knock, payout=payout, binary=binary)
+    premium = float(payoff_barrier(s0, strike, barrier, option_type=option_type, direction=direction, knock=knock, payout=payout, binary=binary))
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def price_calendar_spread_bs(S: float, K: float, T_short: float, T_long: float, option_type: str = "call", r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA) -> float:
+    if option_type == "put":
+        return bs_price_put(S, K, r=r, q=q, sigma=sigma, T=T_long) - bs_price_put(S, K, r=r, q=q, sigma=sigma, T=T_short)
+    return bs_price_call(S, K, r=r, q=q, sigma=sigma, T=T_long) - bs_price_call(S, K, r=r, q=q, sigma=sigma, T=T_short)
+
+
+def view_calendar_spread(s0: float, strike: float, T_short: float, T_long: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = price_calendar_spread_bs(s0, strike, T_short, T_long, **kwargs)
+    def _payoff(s, k):
+        base = payoff_call if kwargs.get("option_type", "call") != "put" else payoff_put
+        return base(s, k) - base(s, k)
+    # payoff at maturity is driven by long leg only (illustration), short leg assumed expired
+    payoff_grid = (payoff_call if kwargs.get("option_type", "call") != "put" else payoff_put)(np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n), strike)
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n), pnl_grid)
+    return {"s_grid": np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n), "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
+
+
+def price_diagonal_spread_bs(S: float, k_near: float, k_far: float, T_near: float, T_far: float, option_type: str = "call", r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA) -> float:
+    if option_type == "put":
+        return bs_price_put(S, k_far, r=r, q=q, sigma=sigma, T=T_far) - bs_price_put(S, k_near, r=r, q=q, sigma=sigma, T=T_near)
+    return bs_price_call(S, k_far, r=r, q=q, sigma=sigma, T=T_far) - bs_price_call(S, k_near, r=r, q=q, sigma=sigma, T=T_near)
+
+
+def view_diagonal_spread(s0: float, k_near: float, k_far: float, T_near: float, T_far: float, span: float = 0.5, n: int = 300, **kwargs):
+    premium = price_diagonal_spread_bs(s0, k_near, k_far, T_near, T_far, **kwargs)
+    base = payoff_call if kwargs.get("option_type", "call") != "put" else payoff_put
+    s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
+    payoff_grid = base(s_grid, k_far)  # near leg expired, keep long far leg payoff
+    pnl_grid = payoff_grid - premium
+    bes = _find_breakevens_from_grid(s_grid, pnl_grid)
+    return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
