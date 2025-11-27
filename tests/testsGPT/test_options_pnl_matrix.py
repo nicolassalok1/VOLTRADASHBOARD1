@@ -38,6 +38,7 @@ class OptionsPnLMatrixTests(TestCase):
                         "save_options_book",
                         "load_options_portfolio",
                         "save_options_portfolio",
+                        "_compute_leg_payoff",
                         "add_option_to_dashboard",
                         "_split_options_book",
                         "load_expired_options",
@@ -84,9 +85,9 @@ class OptionsPnLMatrixTests(TestCase):
         return self.api["save_expired_options"](payload)
     
     def _log_json(self, label, mapping):
-        print(f"[JSON-{label}] {len(mapping)} entrées")
+        print(f"[JSON-{label}] {len(mapping)} entrees")
         for key, val in mapping.items():
-            print(f"[JSON-{label}] {key} → status={val.get('status')} "
+            print(f"[JSON-{label}] {key} -> status={val.get('status')} "
                   f"close={val.get('underlying_close')} pnl={val.get('pnl_total')}")
 
     def _expected_pnl(self, opt, spot, mark=None):
@@ -134,24 +135,66 @@ class OptionsPnLMatrixTests(TestCase):
         base_cases = [
             {"name": "vanilla_call", "product_type": "vanilla", "option_type": "call", "strike": 100, "avg_price": 2.0},
             {"name": "vanilla_put", "product_type": "vanilla", "option_type": "put", "strike": 100, "avg_price": 2.0},
+            {"name": "american_call", "product_type": "American", "option_type": "call", "strike": 100, "avg_price": 2.0},
+            {"name": "american_put", "product_type": "American", "option_type": "put", "strike": 100, "avg_price": 2.0},
+            {"name": "bermudan_call", "product_type": "Bermudan", "option_type": "call", "strike": 100, "avg_price": 2.0},
+            {"name": "bermudan_put", "product_type": "Bermudan", "option_type": "put", "strike": 100, "avg_price": 2.0},
             {"name": "digital_call", "product_type": "Digital (cash-or-nothing)", "option_type": "call", "strike": 100, "avg_price": 1.0, "misc": {"payout": 10}},
             {"name": "digital_put", "product_type": "Digital (cash-or-nothing)", "option_type": "put", "strike": 100, "avg_price": 1.0, "misc": {"payout": 10}},
+            {"name": "digital_asset", "product_type": "Digital asset-or-nothing", "option_type": "call", "strike": 100, "avg_price": 1.0, "misc": {"payout": 100}},
             {"name": "asian_arith", "product_type": "Asian arithmétique", "option_type": "call", "strike": 100, "avg_price": 1.0, "misc": {"closing_prices": [100, 102, 104]}},
             {"name": "asian_arith_put", "product_type": "Asian arithmétique", "option_type": "put", "strike": 100, "avg_price": 1.0, "misc": {"closing_prices": [100, 102, 104]}},
+            {"name": "asian_geom", "product_type": "Asian géométrique", "option_type": "call", "strike": 100, "avg_price": 1.0, "misc": {"closing_prices": [100, 101, 99]}},
             {"name": "barrier_call", "product_type": "Barrier up-and-out", "option_type": "call", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 200, "direction": "out", "barrier_type": "up"}},
             {"name": "barrier_put", "product_type": "Barrier up-and-out", "option_type": "put", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 200, "direction": "out", "barrier_type": "up"}},
+            {"name": "barrier_up_in_call", "product_type": "Barrier up-and-in", "option_type": "call", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 200, "direction": "in", "barrier_type": "up"}},
+            {"name": "barrier_up_in_put", "product_type": "Barrier up-and-in", "option_type": "put", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 200, "direction": "in", "barrier_type": "up"}},
+            {"name": "barrier_down_out_call", "product_type": "Barrier down-and-out", "option_type": "call", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 50, "direction": "out", "barrier_type": "down"}},
+            {"name": "barrier_down_out_put", "product_type": "Barrier down-and-out", "option_type": "put", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 50, "direction": "out", "barrier_type": "down"}},
+            {"name": "barrier_down_in_call", "product_type": "Barrier down-and-in", "option_type": "call", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 50, "direction": "in", "barrier_type": "down"}},
+            {"name": "barrier_down_in_put", "product_type": "Barrier down-and-in", "option_type": "put", "strike": 100, "avg_price": 1.5, "misc": {"barrier": 50, "direction": "in", "barrier_type": "down"}},
+            {"name": "lookback_floating", "product_type": "Lookback floating", "option_type": "call", "strike": 100, "avg_price": 2.0, "misc": {"closing_prices": [100, 110, 95]}},
+            {"name": "lookback_fixed", "product_type": "Lookback fixed", "option_type": "call", "strike": 100, "avg_price": 2.0, "misc": {"closing_prices": [100, 110, 95]}},
             {"name": "straddle", "product_type": "Straddle", "option_type": "call", "strike": 100, "avg_price": 4.0},
             {"name": "straddle_put", "product_type": "Straddle", "option_type": "put", "strike": 100, "avg_price": 4.0},
             {"name": "strangle", "product_type": "Strangle", "option_type": "call", "strike": 95, "strike2": 105, "avg_price": 3.0},
             {"name": "strangle_put", "product_type": "Strangle", "option_type": "put", "strike": 95, "strike2": 105, "avg_price": 3.0},
             {"name": "call_spread", "product_type": "Call spread", "option_type": "call", "strike": 100, "strike2": 110, "avg_price": 2.0},
             {"name": "put_spread", "product_type": "Put spread", "option_type": "put", "strike": 110, "strike2": 100, "avg_price": 2.5},
+            {"name": "butterfly", "product_type": "Butterfly", "option_type": "call", "strike": 100, "avg_price": 1.0, "legs": [
+                {"option_type": "call", "strike": 90, "qty": 1, "side": "long"},
+                {"option_type": "call", "strike": 100, "qty": 2, "side": "short"},
+                {"option_type": "call", "strike": 110, "qty": 1, "side": "long"},
+            ]},
+            {"name": "condor", "product_type": "Condor", "option_type": "call", "strike": 100, "avg_price": 1.0, "legs": [
+                {"option_type": "call", "strike": 90, "qty": 1, "side": "long"},
+                {"option_type": "call", "strike": 100, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 110, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 120, "qty": 1, "side": "long"},
+            ]},
+            {"name": "iron_condor", "product_type": "Iron Condor", "option_type": "call", "strike": 100, "avg_price": 1.0, "legs": [
+                {"option_type": "put", "strike": 90, "qty": 1, "side": "long"},
+                {"option_type": "put", "strike": 95, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 105, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 110, "qty": 1, "side": "long"},
+            ]},
+            {"name": "iron_butterfly", "product_type": "Iron Butterfly", "option_type": "call", "strike": 100, "avg_price": 1.0, "legs": [
+                {"option_type": "put", "strike": 95, "qty": 1, "side": "long"},
+                {"option_type": "put", "strike": 100, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 100, "qty": 1, "side": "short"},
+                {"option_type": "call", "strike": 105, "qty": 1, "side": "long"},
+            ]},
+            {"name": "diagonal_spread", "product_type": "Diagonal spread", "option_type": "call", "strike": 100, "avg_price": 1.5, "legs": [
+                {"option_type": "call", "strike": 100, "qty": 1, "side": "long"},
+                {"option_type": "call", "strike": 110, "qty": 1, "side": "short"},
+            ]},
             {"name": "chooser", "product_type": "Chooser", "option_type": "call", "strike": 100, "avg_price": 2.0},
             {"name": "chooser_put", "product_type": "Chooser", "option_type": "put", "strike": 100, "avg_price": 2.0},
             {"name": "forward_start", "product_type": "Forward-start", "option_type": "call", "strike": 100, "avg_price": 2.0},
             {"name": "forward_start_put", "product_type": "Forward-start", "option_type": "put", "strike": 100, "avg_price": 2.0},
-            {"name": "basket_nn", "product_type": "Basket NN", "option_type": "call", "strike": 100, "avg_price": 2.0},
-            {"name": "basket_nn_put", "product_type": "Basket NN", "option_type": "put", "strike": 100, "avg_price": 2.0},
+            {"name": "cliquet", "product_type": "Cliquet / Ratchet", "option_type": "call", "strike": 100, "avg_price": 2.0},
+            {"name": "quanto", "product_type": "Quanto", "option_type": "call", "strike": 100, "avg_price": 2.0},
+            {"name": "rainbow", "product_type": "Rainbow", "option_type": "call", "strike": 100, "avg_price": 2.0},
         ]
 
         for case in base_cases:
@@ -161,8 +204,6 @@ class OptionsPnLMatrixTests(TestCase):
                 payload["quantity"] = 1
                 payload["side"] = side
                 self._add(payload)
-                print(f"[JSON-CREATE] {payload['id']} product={payload.get('product_type')} "
-                      f"type={payload.get('option_type')} side={side}")
 
         book = self._book()
         self.assertEqual(len(book), len(base_cases) * 2)
@@ -188,7 +229,7 @@ class OptionsPnLMatrixTests(TestCase):
                 print("==============================")
             if opt_type and opt_type not in seen_sections[base_name]:
                 seen_sections[base_name].add(opt_type)
-                print(f"\n////////// {opt_type.upper()} //////////")
+            print(f"\n////////// {opt_type.upper()} //////////")
             print(f"\n\\\\\\\\\\\\\\\\ {side.upper()} \\\\\\\\\\\\\\\\")
             spots = self._spots(opt)
             strike_base = float(opt.get("strike") or 1.0)
@@ -203,28 +244,20 @@ class OptionsPnLMatrixTests(TestCase):
                 return val / strike_base if strike_base else 0.0
 
             # Mark-to-market (mid-term) : on logge ATM/ITM/OTM
-            print("---- CLOSING ----")
             for scen in scenarios:
                 spot_close = spots[scen]
-                mid = self._pnl(opt, spot=spot_close)
-                expected_mid = self._expected_pnl(opt, spot=spot_close)
-                self.assertAlmostEqual(mid["pnl_total"], expected_mid["pnl_total"], places=6)
-                print(
-                    f"[CLOSE-{scen.upper()}] {opt_id} stock={spot_close} strike={strike_base} "
-                    f"T%=50 pnl={mid['pnl_total']:.4f}"
-                )
-            print("---- EXPIRATION ----")
+                with self.subTest(option=opt_id, phase="closing", scenario=scen):
+                    mid = self._pnl(opt, spot=spot_close)
+                    expected_mid = self._expected_pnl(opt, spot=spot_close)
+                    self.assertAlmostEqual(mid["pnl_total"], expected_mid["pnl_total"], places=6)
 
             for scen in scenarios:
-                spot = spots[scen]
-                res = self._pnl(opt, spot=spot)
-                expected = self._expected_pnl(opt, spot=spot)
-                self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
-                self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
-                print(
-                    f"[EXP-{scen.upper()}] {opt_id} stock={spot} moneyness={moneyness(spot):.4f} "
-                    f"T%=0 payoff={res['payoff_per_unit']:.4f} pnl={res['pnl_total']:.4f}"
-                )
+                with self.subTest(option=opt_id, phase="expiration", scenario=scen):
+                    spot = spots[scen]
+                    res = self._pnl(opt, spot=spot)
+                    expected = self._expected_pnl(opt, spot=spot)
+                    self.assertAlmostEqual(res["pnl_total"], expected["pnl_total"], places=6)
+                    self.assertAlmostEqual(res["pnl_per_unit"], expected["pnl_per_unit"], places=6)
 
             # Workflow JSON tests : côté long → fermeture mid-term ; côté short → expiration
             if side == "long":
@@ -239,7 +272,6 @@ class OptionsPnLMatrixTests(TestCase):
                     }
                 )
                 closed_payloads[opt_id] = close_entry
-                print(f"[JSON-CLOSE] {opt_id} spot={close_spot} pnl={close_entry.get('pnl_total')}")
             else:
                 exp_spot = spots["atm"]
                 exp_entry = dict(opt)
@@ -252,12 +284,10 @@ class OptionsPnLMatrixTests(TestCase):
                     }
                 )
                 expired_payloads[opt_id] = exp_entry
-                print(f"[JSON-EXPIRE] {opt_id} spot={exp_spot} pnl={exp_entry.get('pnl_total')}")
 
         all_expired = {}
         all_expired.update(closed_payloads)
         all_expired.update(expired_payloads)
         self._save_expired(all_expired)
-        self._log_json("WRITE", all_expired)
         loaded_expired = self._expired()
         self.assertEqual(len(loaded_expired), len(all_expired))
