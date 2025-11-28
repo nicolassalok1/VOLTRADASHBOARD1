@@ -5859,6 +5859,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_digital:
+            opt_label_dig, opt_char_dig = _choose_option_select("opt_choice_digital", option_char)
+            option_label, option_char = opt_label_dig, opt_char_dig
             strike = st.slider(
                 "Strike",
                 min_value=0.5 * float(common_spot_value),
@@ -5867,7 +5869,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=0.5,
                 key=_k("digital_k"),
             )
-            opt_type = "call" if option_char.lower() == "c" else "put"
+            opt_type = "call" if opt_char_dig == "c" else "put"
             view_dyn = view_digital(
                 float(common_spot_value),
                 strike,
@@ -5917,7 +5919,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if st.button("Ajouter au dashboard", key=_k("digital_add_inline")):
                 payload = {
                     "underlying": underlying or "N/A",
-                    "option_type": opt_char_rain,
+                    "option_type": opt_char_dig,
                     "product_type": "Digital",
                     "type": "Digital",
                     "strike": float(strike),
@@ -5954,6 +5956,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_asset_on:
+            opt_label_aon, opt_char_aon = _choose_option_select("opt_choice_asset_on", option_char)
+            option_label, option_char = opt_label_aon, opt_char_aon
             strike = st.slider(
                 "Strike",
                 min_value=0.5 * float(common_spot_value),
@@ -5962,7 +5966,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=0.5,
                 key=_k("asset_on_k"),
             )
-            opt_type = "call" if option_char.lower() == "c" else "put"
+            opt_type = "call" if opt_char_aon == "c" else "put"
             view_dyn = view_asset_or_nothing(
                 float(common_spot_value),
                 strike,
@@ -6012,7 +6016,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if st.button("Ajouter au dashboard", key=_k("asset_on_add_inline")):
                 payload = {
                     "underlying": underlying or "N/A",
-                    "option_type": opt_char_rain,
+                    "option_type": opt_char_aon,
                     "product_type": "Asset-or-nothing",
                     "type": "Asset-or-nothing",
                     "strike": float(strike),
@@ -6023,7 +6027,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "S0": float(common_spot_value),
                     "maturity_years": common_maturity_value,
                     "legs": [
-                        {"option_type": opt_char_rain, "strike": float(strike), "asset_or_nothing": True},
+                        {"option_type": opt_char_aon, "strike": float(strike), "asset_or_nothing": True},
                     ],
                     "T_0": today.isoformat(),
                     "price": price,
