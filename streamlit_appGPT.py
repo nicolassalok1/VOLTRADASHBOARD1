@@ -2435,9 +2435,12 @@ def run_app_options():
 
         x_train, y_train, x_test, y_test = split_data_nn(df, split_ratio=split_ratio)
         Path("data").mkdir(parents=True, exist_ok=True)
-        pd.concat([x_train, y_train], axis=1).to_csv(DATASETS_DIR / "train.csv", index=False)
-        pd.concat([x_test, y_test], axis=1).to_csv(DATASETS_DIR / "test.csv", index=False)
-        st.info("train.csv et test.csv régénérés pour la surface IV.")
+        if st.session_state.get("carr_madan_calibrated", False):
+            pd.concat([x_train, y_train], axis=1).to_csv(DATASETS_DIR / "train.csv", index=False)
+            pd.concat([x_test, y_test], axis=1).to_csv(DATASETS_DIR / "test.csv", index=False)
+            st.info("train.csv et test.csv générés (suite calibration Carr–Madan).")
+        else:
+            st.info("Calibre d'abord le NN Carr–Madan pour générer train.csv et test.csv.")
 
         st.write(f"Train size: {x_train.shape[0]} | Test size: {x_test.shape[0]}")
 
@@ -3289,7 +3292,16 @@ def run_app_options():
                 st.warning("⚠️ Données CBOE absentes. Utilisation du cache 1 an des clôtures. Clique sur Refresh si besoin.")
 
         if cache_used:
-            st.warning("⚠️ Données CBOE non rafraîchies. Utilisation du cache options récent. Clique sur Refresh pour mettre à jour.")
+            cache_age_msg = ""
+            try:
+                mtime = CACHE_OPTIONS_META_FILE.stat().st_mtime if CACHE_OPTIONS_META_FILE.exists() else None
+                if mtime:
+                    age_hours = (datetime.datetime.now() - datetime.datetime.fromtimestamp(mtime)).total_seconds() / 3600
+                    cache_age_msg = f"Âge du cache options : ~{age_hours:.1f} h"
+            except Exception:
+                cache_age_msg = ""
+
+            st.info(f"📦 Cache options utilisé. {cache_age_msg or 'Âge du cache inconnu.'} (Refresh pour actualiser).")
 
         # Si aucun cache ni données disponibles, on bloque l'affichage
         if (calls_df is None and puts_df is None) and S0_ref is None:
@@ -3396,9 +3408,6 @@ def run_app_options():
     if not tkr_hist:
         st.info("Charge un ticker via la calibration Heston pour afficher l'historique 1 an.")
     else:
-        st.caption(
-            f"S₀ (spot) = {common_spot_value:.4f} | r (risk-free) = {common_rate_value:.4f} | d (dividende continu) = {float(d_common):.4f}"
-        )
         header_table = pd.DataFrame.from_dict(
             {"S0": [common_spot_value], "r": [common_rate_value], "d": [float(d_common)]}
         )
@@ -4709,6 +4718,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=0.01,
                 key=_k("eu_T_slider"),
             )
+            st.session_state["eu_T_slider_val"] = T_slider
             opt_type = "call" if option_char == "c" else "put"
             premium_eu = _vanilla_price_with_dividend(
                 option_type=opt_type,
@@ -4828,29 +4838,34 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     )
                     st.session_state["heston_cboe_calib_band"] = calib_T_band
 
-                    unique_T = sorted(calls_df["T"].round(2).unique().tolist())
-                    if unique_T:
-                        if calib_T_target is None:
+                unique_T = sorted(calls_df["T"].round(2).unique().tolist())
+                if unique_T:
+                    if calib_T_target is None:
+                        t_slider_pref = st.session_state.get("eu_T_slider_val")
+                        if t_slider_pref is not None:
+                            idx_default = int(np.argmin(np.abs(np.array(unique_T) - float(t_slider_pref))))
+                        else:
                             target_guess = max(MIN_IV_MATURITY, unique_T[0] + calib_T_band + 0.1)
                             idx_default = int(np.argmin(np.abs(np.array(unique_T) - target_guess)))
-                        else:
-                            try:
-                                idx_default = unique_T.index(calib_T_target)
-                            except ValueError:
-                                idx_default = 0
-
-                        calib_T_target = st.selectbox(
-                            "Maturité T cible pour la calibration (Time to Maturity)",
-                            unique_T,
-                            index=idx_default,
-                            format_func=lambda x: f"{x:.2f}",
-                            key=_k("heston_cboe_calib_target"),
-                            help="Maturité autour de laquelle la calibration Heston est centrée.",
-                        )
-                        st.session_state.heston_calib_T_target = calib_T_target
                     else:
-                        st.warning("Pas de maturités disponibles dans les données CBOE.")
-                        calib_T_target = None
+                        try:
+                            idx_default = unique_T.index(calib_T_target)
+                        except ValueError:
+                            idx_default = 0
+
+                    idx_default = max(0, min(idx_default, len(unique_T) - 1))
+                    calib_T_target = st.selectbox(
+                        "Maturité T cible pour la calibration (Time to Maturity)",
+                        unique_T,
+                        index=idx_default,
+                        format_func=lambda x: f"{x:.2f}",
+                        key=_k("heston_cboe_calib_target"),
+                        help="Maturité autour de laquelle la calibration Heston est centrée.",
+                    )
+                    st.session_state.heston_calib_T_target = calib_T_target
+                else:
+                    st.warning("Pas de maturités disponibles dans les données CBOE.")
+                    calib_T_target = None
 
                 with col_modes:
                     st.subheader("⚙️ Modes de calibration NN")
@@ -4938,6 +4953,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         st.session_state["heston_eta_common"] = params_dict["sigma"]
                         st.session_state["heston_rho_common"] = params_dict["rho"]
                         st.session_state["heston_v0_common"] = params_dict["v0"]
+                        st.session_state["carr_madan_calibrated"] = True
                         st.success("✓ Calibration terminée")
                         st.dataframe(pd.Series(params_dict, name="Paramètre").to_frame())
                         st.balloons()

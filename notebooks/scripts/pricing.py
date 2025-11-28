@@ -11,7 +11,7 @@ DEFAULT_SIGMA = 0.2
 DEFAULT_T = 1.0
 
 # Anchor cache to the notebooks/ directory to avoid scattering files when running from subfolders
-_CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "_cache_spy_close.csv"
+_CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "closing_cache.csv"
 
 
 def _norm_cdf(x: float) -> float:
