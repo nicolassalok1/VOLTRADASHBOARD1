@@ -15,6 +15,7 @@ DEFAULT_T = 1.0
 # Anchor cache to the notebooks/ directory to avoid scattering files when running from subfolders
 _CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "closing_cache.csv"
 _LEGACY_CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "_cache_spy_close.csv"
+_CLOSING_CACHE_AGE_HOURS = 0.0
 _HES_DIR = Path(__file__).resolve().parents[2] / "scripts" / "scriptsGPT" / "pricing_scripts"
 
 # Ensure Heston torch pricer is importable
@@ -33,6 +34,17 @@ def _migrate_legacy_spy_cache() -> None:
         if _LEGACY_CACHE_SPY_CLOSE.exists():
             _CACHE_SPY_CLOSE.parent.mkdir(parents=True, exist_ok=True)
             _LEGACY_CACHE_SPY_CLOSE.replace(_CACHE_SPY_CLOSE)
+    except Exception:
+        pass
+
+
+def _save_closing_cache(series: pd.Series) -> None:
+    """Persist SPY close series and reset age indicator."""
+    global _CLOSING_CACHE_AGE_HOURS
+    try:
+        _CACHE_SPY_CLOSE.parent.mkdir(parents=True, exist_ok=True)
+        series.to_csv(_CACHE_SPY_CLOSE, index_label="date")
+        _CLOSING_CACHE_AGE_HOURS = 0.0
     except Exception:
         pass
 
@@ -73,11 +85,7 @@ def fetch_spy_history(period: str = "1y", interval: str = "1d", cache_path: Path
     if data.empty or "Close" not in data:
         raise RuntimeError("Impossible de récupérer les prix SPY")
     close = data["Close"]
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        close.to_csv(cache_path, index_label="date")
-    except Exception:
-        pass
+    _save_closing_cache(close)
     return close
 
 

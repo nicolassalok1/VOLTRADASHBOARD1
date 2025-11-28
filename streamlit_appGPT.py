@@ -4822,11 +4822,15 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=max(0.01, K_h_common * 0.01),
                 key=_k("eu_k_slider_heston"),
             )
+            t_band_h = float(st.session_state.get("heston_cboe_calib_band", 0.4))
+            t_center_h = float(calib_T_target) if calib_T_target is not None else float(common_maturity_value)
+            t_min = max(0.01, t_center_h - t_band_h)
+            t_max = max(t_min + 0.001, t_center_h + t_band_h)
             T_slider_h = st.slider(
                 "T (années – visualisation Heston)",
-                min_value=0.05,
-                max_value=2.0,
-                value=float(calib_T_target) if calib_T_target is not None else float(common_maturity_value),
+                min_value=float(t_min),
+                max_value=float(t_max),
+                value=float(min(max(t_center_h, t_min), t_max)),
                 step=0.01,
                 key=_k("eu_T_slider_heston"),
             )
@@ -4908,7 +4912,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 calib_T_target = st.session_state.get("heston_calib_T_target")
                 col_nn, col_modes = st.columns(2)
                 with col_nn:
-                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.04))
+                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.4))
 
                     unique_T = sorted(calls_df["T"].round(2).unique().tolist())
                     if unique_T:
@@ -4938,10 +4942,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     calib_T_band = st.number_input(
                         "Largeur bande T (±)",
                         value=calib_T_band_default,
-                        min_value=0.01,
+                        min_value=0.1,
                         max_value=0.5,
-                        step=0.01,
-                        format="%.2f",
+                        step=0.1,
+                        format="%.1f",
                         key=_k("heston_cboe_calib_band"),
                         help="Largeur de la bande de maturités autour de la cible utilisée pour la calibration.",
                     )
@@ -4984,68 +4988,72 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         st.error("Veuillez choisir une maturité T cible après avoir chargé les données.")
                         st.stop()
 
-                    with st.spinner("Calibration Heston en cours..."):
-                        try:
-                            st.info(f"📡 Données CBOE chargées pour {st.session_state.get('heston_cboe_ticker', '')} (cache)")
-                            st.success(f"{len(calls_df)} calls, {len(puts_df)} puts | S0 ≈ {S0_ref:.2f}")
-                            st.write(f"Maturité T cible pour la calibration : {calib_T_target:.2f} ans")
+                    status_holder = st.empty()
+                    status_holder.info("🧠 Calibration Heston en cours...")
+                    try:
+                        st.info(f"📡 Données CBOE chargées pour {st.session_state.get('heston_cboe_ticker', '')} (cache)")
+                        st.success(f"{len(calls_df)} calls, {len(puts_df)} puts | S0 ≈ {S0_ref:.2f}")
+                        st.write(f"Maturité T cible pour la calibration : {calib_T_target:.2f} ans")
 
-                            st.info("🧠 Calibration ciblée...")
-                            progress_bar = st.progress(0.0)
-                            status_text = st.empty()
-                            loss_log: list[float] = []
+                        progress_bar = st.progress(0.0)
+                        status_text = st.empty()
+                        loss_log: list[float] = []
 
-                            def progress_cb(current: int, total: int, loss_val: float) -> None:
-                                progress_bar.progress(current / total)
-                                status_text.text(f"⏳ Iter {current}/{total} | Loss = {loss_val:.6f}")
-                                loss_log.append(loss_val)
-                                st.session_state["heston_calib_progress"] = current / total
+                        def progress_cb(current: int, total: int, loss_val: float) -> None:
+                            progress_bar.progress(current / total)
+                            status_text.text(f"⏳ Iter {current}/{total} | Loss = {loss_val:.6f}")
+                            loss_log.append(loss_val)
+                            st.session_state["heston_calib_progress"] = current / total
 
-                            calib_slice = calls_df[
-                                (calls_df["T"].round(2).between(*calib_band_range))
-                                & (calls_df["K"].between(S0_ref - span_mc, S0_ref + span_mc))
-                                & (calls_df["C_mkt"] > 0.05)
-                                & (calls_df["iv_market"] > 0)
-                            ]
-                            if len(calib_slice) < 5:
-                                calib_slice = calls_df.copy()
+                        calib_slice = calls_df[
+                            (calls_df["T"].round(2).between(*calib_band_range))
+                            & (calls_df["K"].between(S0_ref - span_mc, S0_ref + span_mc))
+                            & (calls_df["C_mkt"] > 0.05)
+                            & (calls_df["iv_market"] > 0)
+                        ]
+                        if len(calib_slice) < 5:
+                            calib_slice = calls_df.copy()
 
-                            params_cm = calibrate_heston_nn(
-                                calib_slice,
-                                r=rf_rate,
-                                q=div_yield,
-                                max_iters=int(max_iters),
-                                lr=learning_rate,
-                                spot_override=S0_ref,
-                                progress_callback=progress_cb,
-                            )
-                            progress_bar.empty()
-                            status_text.empty()
+                        params_cm = calibrate_heston_nn(
+                            calib_slice,
+                            r=rf_rate,
+                            q=div_yield,
+                            max_iters=int(max_iters),
+                            lr=learning_rate,
+                            spot_override=S0_ref,
+                            progress_callback=progress_cb,
+                        )
+                        progress_bar.empty()
+                        status_text.empty()
+                        status_holder.empty()
 
-                            params_dict = {
-                                "kappa": float(params_cm.kappa.detach()),
-                                "theta": float(params_cm.theta.detach()),
-                                "sigma": float(params_cm.sigma.detach()),
-                                "rho": float(params_cm.rho.detach()),
-                                "v0": float(params_cm.v0.detach()),
-                            }
-                            st.session_state["heston_kappa_common"] = params_dict["kappa"]
-                            st.session_state["heston_theta_common"] = params_dict["theta"]
-                            st.session_state["heston_eta_common"] = params_dict["sigma"]
-                            st.session_state["heston_rho_common"] = params_dict["rho"]
-                            st.session_state["heston_v0_common"] = params_dict["v0"]
-                            st.session_state["carr_madan_calibrated"] = True
-                            st.success("✓ Calibration terminée")
-                            st.dataframe(pd.Series(params_dict, name="Paramètre").to_frame())
-                            st.balloons()
-                            st.success("🎉 Analyse terminée")
-                            params_heston = _heston_params_from_state()
+                        params_dict = {
+                            "kappa": float(params_cm.kappa.detach()),
+                            "theta": float(params_cm.theta.detach()),
+                            "sigma": float(params_cm.sigma.detach()),
+                            "rho": float(params_cm.rho.detach()),
+                            "v0": float(params_cm.v0.detach()),
+                        }
+                        st.session_state["heston_kappa_common"] = params_dict["kappa"]
+                        st.session_state["heston_theta_common"] = params_dict["theta"]
+                        st.session_state["heston_eta_common"] = params_dict["sigma"]
+                        st.session_state["heston_rho_common"] = params_dict["rho"]
+                        st.session_state["heston_v0_common"] = params_dict["v0"]
+                        st.session_state["carr_madan_calibrated"] = True
+                        st.success("✓ Calibration terminée")
+                        st.dataframe(pd.Series(params_dict, name="Paramètre").to_frame())
+                        st.balloons()
+                        st.success("🎉 Analyse terminée")
+                        params_heston = _heston_params_from_state()
 
-                        except Exception as exc:
-                            st.error(f"❌ Erreur : {exc}")
-                            import traceback
+                    except Exception as exc:
+                        progress_bar.empty()
+                        status_text.empty()
+                        status_holder.empty()
+                        st.error(f"❌ Erreur : {exc}")
+                        import traceback
 
-                            st.code(traceback.format_exc())
+                        st.code(traceback.format_exc())
 
             render_inputs_explainer(
                 "🔧 Paramètres utilisés – Heston européen",
@@ -5079,10 +5087,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 except Exception as exc:
                     st.error(f"Erreur Carr–Madan : {exc}")
                     price_cm = None
-            try:
-                with st.spinner("Calcul heatmap & surface IV Heston…"):
+            if st.session_state.get("carr_madan_calibrated", False):
+                try:
+                    heatmap_status = st.info("Calcul heatmap & surface IV Heston…")
                     k_vals = heatmap_strike_values
-                    t_vals = heatmap_maturity_values
+                    t_vals = _heatmap_axis(t_center_h, t_band_h)
 
                     call_matrix = np.zeros((len(t_vals), len(k_vals)), dtype=float)
                     put_matrix = np.zeros_like(call_matrix)
@@ -5120,16 +5129,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                                 r=float(common_rate_value),
                                 option_type="call" if option_char == "c" else "put",
                             )
-                    st.markdown("**Heatmap prix Heston (K × T)**")
-                    _render_heatmap(
-                        price_grid,
-                        k_vals,
-                        t_vals,
-                        "Prix Heston (Carr–Madan)",
-                        xlabel="Strike K",
-                        ylabel="Maturité T",
-                        wrap_in_expander=False,
-                    )
+                    heatmap_status.empty()
                     try:
                         iv_masked = np.nan_to_num(iv_grid, nan=0.0, posinf=0.0, neginf=0.0)
                         fig_iv = go.Figure(
@@ -5154,20 +5154,23 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         st.plotly_chart(fig_iv, use_container_width=True, key=_k("heston_iv_surface"))
                     except Exception as _surf_exc:
                         st.warning(f"Impossible d'afficher la surface IV : {_surf_exc}")
-            except Exception as exc:
-                st.error(f"Erreur calcul heatmap / surface IV Heston : {exc}")
+                except Exception as exc:
+                    st.error(f"Erreur calcul heatmap / surface IV Heston : {exc}")
+            else:
+                st.info("Calibre Heston pour afficher la heatmap de prix et la surface IV.")
 
-            final_price = price_cm if price_cm is not None else None
-            render_add_to_dashboard_button(
-                product_label="Vanilla (Heston CM)",
-                option_char=option_char,
-                price_value=final_price,
-                strike=common_strike_value,
-                maturity=common_maturity_value,
-                key_prefix=_k("save_heston_cm_final"),
-                spot=common_spot_value,
-                misc=misc_heston,
-            )
+            if st.session_state.get("carr_madan_calibrated", False):
+                final_price = price_cm if price_cm is not None else None
+                render_add_to_dashboard_button(
+                    product_label="Vanilla (Heston CM)",
+                    option_char=option_char,
+                    price_value=final_price,
+                    strike=common_strike_value,
+                    maturity=common_maturity_value,
+                    key_prefix=_k("save_heston_cm_final"),
+                    spot=common_spot_value,
+                    misc=misc_heston,
+                )
 
             st.divider()
 
