@@ -6864,24 +6864,215 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_calendar:
-            _render_option_text("Calendar spread", "calendar_graph")
-            _flag_cal = st.session_state.get(_k("run_calendar_done"), False)
-            if not _flag_cal:
-                if st.button("🚀 Lancer le pricing Calendar spread", key=_k("run_calendar_btn"), type="primary"):
-                    st.session_state[_k("run_calendar_done")] = True
-                    _flag_cal = True
-            if _flag_cal:
-                _render_structure_panel("Calendar spread")
+            st.subheader("Calendar spread – vue Notebook")
+            spy_close = None
+            s0_ref = float(common_spot_value)
+            try:
+                from pricing import fetch_spy_history
+
+                spy_close = fetch_spy_history()
+            except Exception as exc:
+                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
+                try:
+                    from pricing import fetch_spy_history as _fetch_spy_history
+
+                    spy_close = _fetch_spy_history()
+                except Exception as exc2:
+                    st.error(f"Impossible de récupérer les clôtures SPY (fallback) : {exc2}")
+            if spy_close is not None and not spy_close.empty:
+                s0_ref = float(spy_close.iloc[-1])
+            else:
+                spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_cal = st.selectbox("Type", ["call", "put"], key=_k("calendar_type"))
+                strike_cal = st.slider(
+                    "Strike",
+                    min_value=0.6 * s0_ref,
+                    max_value=1.4 * s0_ref,
+                    value=s0_ref,
+                    step=0.5,
+                    key=_k("calendar_strike"),
+                )
+                t_short = st.slider("T court (années)", min_value=0.05, max_value=1.0, value=0.25, step=0.05, key=_k("calendar_t_short"))
+                t_long_raw = st.slider("T long (années)", min_value=0.1, max_value=2.0, value=0.75, step=0.05, key=_k("calendar_t_long"))
+                t_long = max(t_long_raw, t_short + 0.01)
+                if t_long != t_long_raw:
+                    st.caption(f"T long ajusté à {t_long:.2f} pour rester après T court.")
+            with col2:
+                sigma_cal = st.slider(
+                    "Sigma",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=common_sigma_value,
+                    step=0.01,
+                    key=_k("calendar_sigma"),
+                )
+                r_cal = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("calendar_r"))
+                span_cal = st.slider("Span payoff (%)", min_value=0.1, max_value=1.0, value=0.5, step=0.05, key=_k("calendar_span"))
+
+            view_dyn = view_calendar_spread(
+                s0_ref,
+                strike_cal,
+                T_short=t_short,
+                T_long=t_long,
+                option_type=option_type_cal,
+                r=r_cal,
+                q=0.0,
+                sigma=sigma_cal,
+                span=span_cal,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_ref, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            forward_start_date = datetime.date.today() + datetime.timedelta(days=int(t_short * 365))
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.axhline(strike_cal, color="gray", linestyle="--", label=f"K = {strike_cal:.2f}")
+            ax_ts.axvline(forward_start_date, color="purple", linestyle=":", label=f"Start ~ {forward_start_date.isoformat()}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (strike / forward start)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(strike_cal, color="gray", linestyle="--", label=f"K = {strike_cal:.2f}")
+            ax_pay.axvline(s0_ref, color="crimson", linestyle="-.", label=f"S0 = {s0_ref:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Calendar spread ({option_type_cal})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+- T court = {t_short:.2f} | T long = {t_long:.2f}
+"""
+            )
 
         with tab_diagonal:
-            _render_option_text("Diagonal spread", "diagonal_graph")
-            _flag_diag = st.session_state.get(_k("run_diagonal_done"), False)
-            if not _flag_diag:
-                if st.button("🚀 Lancer le pricing Diagonal spread", key=_k("run_diagonal_btn"), type="primary"):
-                    st.session_state[_k("run_diagonal_done")] = True
-                    _flag_diag = True
-            if _flag_diag:
-                _render_structure_panel("Diagonal spread")
+            st.subheader("Diagonal spread – vue Notebook")
+            spy_close = None
+            s0_ref = float(common_spot_value)
+            try:
+                from pricing import fetch_spy_history
+
+                spy_close = fetch_spy_history()
+            except Exception as exc:
+                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
+                try:
+                    from pricing import fetch_spy_history as _fetch_spy_history
+
+                    spy_close = _fetch_spy_history()
+                except Exception as exc2:
+                    st.error(f"Impossible de récupérer les clôtures SPY (fallback) : {exc2}")
+            if spy_close is not None and not spy_close.empty:
+                s0_ref = float(spy_close.iloc[-1])
+            else:
+                spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_diag = st.selectbox("Type", ["call", "put"], key=_k("diag_type"))
+                k_near = st.slider(
+                    "Strike near",
+                    min_value=0.6 * s0_ref,
+                    max_value=1.4 * s0_ref,
+                    value=0.98 * s0_ref,
+                    step=0.5,
+                    key=_k("diag_k_near"),
+                )
+                k_far = st.slider(
+                    "Strike far",
+                    min_value=0.6 * s0_ref,
+                    max_value=1.6 * s0_ref,
+                    value=1.02 * s0_ref,
+                    step=0.5,
+                    key=_k("diag_k_far"),
+                )
+                t_near = st.slider("T near (années)", min_value=0.05, max_value=1.0, value=0.25, step=0.05, key=_k("diag_t_near"))
+                t_far_raw = st.slider("T far (années)", min_value=0.1, max_value=2.0, value=0.75, step=0.05, key=_k("diag_t_far"))
+                t_far = max(t_far_raw, t_near + 0.01)
+                if t_far != t_far_raw:
+                    st.caption(f"T far ajusté à {t_far:.2f} pour rester après T near.")
+            with col2:
+                sigma_diag = st.slider(
+                    "Sigma",
+                    min_value=0.01,
+                    max_value=1.0,
+                    value=common_sigma_value,
+                    step=0.01,
+                    key=_k("diag_sigma"),
+                )
+                r_diag = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("diag_r"))
+                span_diag = st.slider("Span payoff (%)", min_value=0.1, max_value=1.0, value=0.5, step=0.05, key=_k("diag_span"))
+
+            view_dyn = view_diagonal_spread(
+                s0_ref,
+                k_near,
+                k_far,
+                T_near=t_near,
+                T_far=t_far,
+                option_type=option_type_diag,
+                r=r_diag,
+                q=0.0,
+                sigma=sigma_diag,
+                span=span_diag,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_ref, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            forward_start_date = datetime.date.today() + datetime.timedelta(days=int(t_near * 365))
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.axhline(k_near, color="gray", linestyle="--", label=f"K near = {k_near:.2f}")
+            ax_ts.axhline(k_far, color="firebrick", linestyle=":", label=f"K far = {k_far:.2f}")
+            ax_ts.axvline(forward_start_date, color="purple", linestyle=":", label=f"Start near ~ {forward_start_date.isoformat()}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (strikes / start)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(k_near, color="gray", linestyle="--", label=f"K near = {k_near:.2f}")
+            ax_pay.axvline(k_far, color="firebrick", linestyle=":", label=f"K far = {k_far:.2f}")
+            ax_pay.axvline(s0_ref, color="crimson", linestyle="-.", label=f"S0 = {s0_ref:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Diagonal spread ({option_type_diag})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+- T near = {t_near:.2f} | T far = {t_far:.2f}
+"""
+            )
 
         with tab_asian_geo:
             _render_option_text("Asian géométrique (payoff terminal)", "asian_geo_graph")
