@@ -178,8 +178,25 @@ def payoff_iron_condor(spot, k_put_long: float, k_put_short: float, k_call_short
     return payoff_put(spot, k_put_long) - payoff_put(spot, k_put_short) - payoff_call(spot, k_call_short) + payoff_call(spot, k_call_long)
 
 
-def price_straddle_bs(S: float, strike: float, r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA, T: float = DEFAULT_T) -> float:
-    return bs_price_put(S, strike, r=r, q=q, sigma=sigma, T=T) + bs_price_call(S, strike, r=r, q=q, sigma=sigma, T=T)
+def price_straddle_bs(
+    S: float,
+    strike: float,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+    sigma: float = DEFAULT_SIGMA,
+    T: float = DEFAULT_T,
+    sigma_call: float | None = None,
+    sigma_put: float | None = None,
+) -> float:
+    """Straddle BS pricing with optional distinct call/put vols."""
+    sigma_c = DEFAULT_SIGMA if sigma_call is None else sigma_call
+    sigma_p = DEFAULT_SIGMA if sigma_put is None else sigma_put
+    # Fallback: if specific vols absent, use the common sigma argument.
+    if sigma_call is None:
+        sigma_c = sigma
+    if sigma_put is None:
+        sigma_p = sigma
+    return bs_price_put(S, strike, r=r, q=q, sigma=sigma_p, T=T) + bs_price_call(S, strike, r=r, q=q, sigma=sigma_c, T=T)
 
 
 def price_strangle_bs(S: float, k_put: float, k_call: float, r: float = DEFAULT_R, q: float = DEFAULT_Q, sigma: float = DEFAULT_SIGMA, T: float = DEFAULT_T) -> float:

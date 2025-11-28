@@ -6482,9 +6482,14 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("straddle_T"),
             )
             iv_straddle = _get_cached_iv_for(strike_slider, T_straddle, "call")
-            sigma_straddle = float(iv_straddle) if iv_straddle is not None and np.isfinite(iv_straddle) and iv_straddle > 0 else float(common_sigma_value)
-            if iv_straddle is not None and np.isfinite(iv_straddle) and iv_straddle > 0:
-                st.caption(f"IV récupérée (cache) ≈ {iv_straddle:.4f}")
+            iv_straddle_put = _get_cached_iv_for(strike_slider, T_straddle, "put")
+            sigma_call_straddle = float(iv_straddle) if iv_straddle is not None and np.isfinite(iv_straddle) and iv_straddle > 0 else float(common_sigma_value)
+            sigma_put_straddle = float(iv_straddle_put) if iv_straddle_put is not None and np.isfinite(iv_straddle_put) and iv_straddle_put > 0 else float(common_sigma_value)
+            if any(v is not None and np.isfinite(v) and v > 0 for v in (iv_straddle, iv_straddle_put)):
+                iv_call_txt = f"{iv_straddle:.4f}" if iv_straddle is not None and np.isfinite(iv_straddle) and iv_straddle > 0 else "n/a"
+                iv_put_txt = f"{iv_straddle_put:.4f}" if iv_straddle_put is not None and np.isfinite(iv_straddle_put) and iv_straddle_put > 0 else "n/a"
+                st.caption(f"IV récupérées (cache) ≈ call {iv_call_txt} | put {iv_put_txt}")
+                st.caption(f"σ utilisées : call {sigma_call_straddle:.4f} | put {sigma_put_straddle:.4f}")
             else:
                 st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
 
@@ -6493,7 +6498,9 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 strike_slider,
                 r=float(common_rate_value),
                 q=float(d_common),
-                sigma=float(sigma_straddle),
+                sigma=float(common_sigma_value),
+                sigma_call=float(sigma_call_straddle),
+                sigma_put=float(sigma_put_straddle),
                 T=float(T_straddle),
             )
             premium = float(view_dyn.get("premium", 0.0))
@@ -6564,7 +6571,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         ],
                         "strike2": float(strike_slider),
                         "spot_at_pricing": float(common_spot_value),
-                        "sigma_used": float(sigma_straddle),
+                        "sigma_call_used": float(sigma_call_straddle),
+                        "sigma_put_used": float(sigma_put_straddle),
                         "r": float(common_rate_value),
                         "q": float(d_common),
                         "maturity": float(T_straddle),
