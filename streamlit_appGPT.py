@@ -3493,6 +3493,19 @@ def run_app_options():
         option_char = "c" if opt_select == "Call" else "p"
         st.session_state["option_type_global"] = opt_select
 
+        def _choose_option_select(key_suffix: str, default_char: str) -> tuple[str, str]:
+            """Selectbox Call/Put locale sans réécrire d'autres clés de session."""
+            default_label = "Call" if default_char.lower() == "c" else "Put"
+            saved = st.session_state.get(key_suffix, default_label)
+            idx = 0 if saved == "Call" else 1 if saved == "Put" else 0
+            choice = st.selectbox(
+                "Type d'option",
+                ["Call", "Put"],
+                index=idx,
+                key=key_suffix,
+            )
+            return choice, ("c" if choice == "Call" else "p")
+
         # Quick payoff helper for dropdown explanations.
         def _payoff_plot(x_vals, y_vals, title, strike_lines=None):
             fig = go.Figure()
@@ -4697,9 +4710,13 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             tab_calendar, tab_diagonal = st.tabs(["Calendar spread", "Diagonal spread"])
 
         with tab_grp_exotics:
+            opt_label_exo, opt_char_exo = _choose_option_select("opt_choice_exo_tab", option_char)
+            option_label, option_char = opt_label_exo, opt_char_exo
             tab_digital, tab_asset_on, tab_chooser, tab_quanto, tab_rainbow = st.tabs(["Digital", "Asset-or-nothing", "Chooser", "Quanto", "Rainbow"])
 
         with tab_grp_basket:
+            opt_label_basket, opt_char_basket = _choose_option_select("opt_choice_basket", option_char)
+            option_label, option_char = opt_label_basket, opt_char_basket
             ui_basket_surface(
                 spot_common=common_spot_value,
                 maturity_common=common_maturity_value,
@@ -4709,6 +4726,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
 
         with tab_european:
+            opt_label_local_eu, opt_char_local_eu = _choose_option_select("opt_choice_eu_tab", option_char)
+            option_label, option_char = opt_label_local_eu, opt_char_local_eu
             st.header("Option européenne")
             _render_option_text("Option européenne", "european_graph")
             calib_T_target = st.session_state.get("heston_calib_T_target")
@@ -4781,7 +4800,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 ),
             )
             cpflag_eu_bsm = option_label
-            st.caption("Type fixé par l’onglet Call / Put en haut de page.")
+            st.caption("Type choisi via la selectbox (Call/Put).")
             with st.spinner("Calcul BSM..."):
                 if option_char == "c":
                     price_bsm = bs_price_call(
@@ -4822,6 +4841,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
         with tab_heston:
             st.header("Option européenne – Heston")
             _render_option_text("Option européenne (Heston)", "european_graph_heston")
+            opt_label_local, opt_char_local = _choose_option_select("opt_choice_heston_tab", option_char)
+            option_label, option_char = opt_label_local, opt_char_local
             params_heston = _heston_params_from_state()
             calib_T_target = st.session_state.get("heston_calib_T_target")
             S0_h = float(common_spot_value)
@@ -4850,7 +4871,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
             st.session_state["eu_T_slider_val"] = T_slider_h
 
-            opt_type_h = "call" if option_char == "c" else "put"
+            opt_type_h = "call" if opt_char_local == "c" else "put"
             price_heston_display: float | None = None
             if st.session_state.get("carr_madan_calibrated", False):
                 try:
@@ -5162,7 +5183,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                                 K=float(k_val),
                                 T=float(t_val),
                                 r=float(common_rate_value),
-                                option_type="call" if option_char == "c" else "put",
+                                option_type="call" if opt_char_local == "c" else "put",
                             )
                     heatmap_status.empty()
                     try:
@@ -5209,7 +5230,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 )
                 render_add_to_dashboard_button(
                     product_label="Vanilla (Heston CM)",
-                    option_char=option_char,
+                    option_char=opt_char_local,
                     price_value=final_price,
                     strike=common_strike_value,
                     maturity=common_maturity_value,
@@ -5221,6 +5242,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             st.divider()
 
         with tab_american:
+            opt_label_local_am, opt_char_local_am = _choose_option_select("opt_choice_am_tab", option_char)
+            option_label, option_char = opt_label_local_am, opt_char_local_am
             st.header("Option américaine")
             cpflag_am = option_label
             cpflag_am_char = option_char
@@ -5303,6 +5326,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
 
         with tab_bermudan:
+            opt_label_local_bmd, opt_char_local_bmd = _choose_option_select("opt_choice_bmd_tab", option_char)
+            option_label, option_char = opt_label_local_bmd, opt_char_local_bmd
             st.header("Option bermudéenne")
             _render_option_text("Option bermudéenne", "bermuda_payoff")
 
@@ -6024,6 +6049,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_forward_start:
+            fs_label, fs_char = _choose_option_select("opt_choice_forward_start", option_char)
+            option_label, option_char = fs_label, fs_char
             spot_start = st.slider(
                 "Spot de départ (S_start)",
                 min_value=0.5 * float(s0_path),
@@ -6139,6 +6166,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     st.error(f"Erreur lors de l'ajout au dashboard (écriture JSON) : {exc}")
 
         with tab_chooser:
+            opt_label_chooser, opt_char_chooser = _choose_option_select("opt_choice_chooser", option_char)
+            option_label, option_char = opt_label_chooser, opt_char_chooser
             strike = st.slider(
                 "Strike",
                 min_value=0.5 * float(common_spot_value),
@@ -6195,7 +6224,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if st.button("Ajouter au dashboard", key=_k("chooser_add_inline")):
                 payload = {
                     "underlying": underlying or "N/A",
-                    "option_type": "chooser",
+                    "option_type": opt_char_chooser,
                     "product_type": "Chooser",
                     "type": "Chooser",
                     "strike": float(strike),
@@ -7560,6 +7589,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
 
         with tab_cliquet:
+            clq_label, clq_char = _choose_option_select("opt_choice_cliquet_tab", option_char)
+            option_label, option_char = clq_label, clq_char
             st.subheader("Cliquet / Ratchet – vue Notebook")
             floor_val = st.slider("Floor", min_value=-0.5, max_value=0.5, value=0.0, step=0.01, key=_k("cliquet_floor"))
             cap_val = st.slider("Cap", min_value=0.0, max_value=0.5, value=0.1, step=0.01, key=_k("cliquet_cap"))
@@ -7621,7 +7652,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if st.button("Ajouter au dashboard", key=_k("cliquet_add"), type="primary"):
                 payload = {
                     "underlying": underlying or "N/A",
-                    "option_type": "call",
+                    "option_type": option_char,
                     "product_type": "Cliquet / Ratchet",
                     "type": "Cliquet / Ratchet",
                     "strike": float(s0_path),
