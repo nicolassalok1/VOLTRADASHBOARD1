@@ -3271,7 +3271,6 @@ def run_app_options():
                 if cached_q is not None:
                     st.session_state["common_dividend"] = float(cached_q)
                 cache_used = True
-                st.warning("⚠️ Données CBOE non rafraîchies. Utilisation du cache options récent. Clique sur Refresh pour mettre à jour.")
             elif cached_hist_df is not None and not cached_hist_df.empty:
                 S0_ref = float(cached_hist_df["Close"].iloc[-1])
                 state.heston_S0_ref = S0_ref
@@ -3279,6 +3278,9 @@ def run_app_options():
                 puts_df = pd.DataFrame(columns=["T", "K", "P_mkt", "iv_market"])
                 cache_used = True
                 st.warning("⚠️ Données CBOE absentes. Utilisation du cache 1 an des clôtures. Clique sur Refresh si besoin.")
+
+        if cache_used:
+            st.warning("⚠️ Données CBOE non rafraîchies. Utilisation du cache options récent. Clique sur Refresh pour mettre à jour.")
 
         # Si aucun cache ni données disponibles, on bloque l'affichage
         if (calls_df is None and puts_df is None) and S0_ref is None:
@@ -3489,7 +3491,7 @@ def run_app_options():
     if not st.session_state.get("heston_cboe_loaded_once", False):
         return
 
-    st.markdown("### Paramètres de Black-Scholes-Merton / Heston")
+    st.markdown("### Paramètres de Black-Scholes-Merton")
 
     # Si les données CBOE ne sont pas chargées, on continue avec les valeurs par défaut,
     # tout en signalant qu'une récupération est recommandée pour les modules Heston.
@@ -3597,34 +3599,7 @@ def run_app_options():
         st.markdown(f"**Span autour du spot (heatmaps)** : {heatmap_span:.1f}")
 
     with col_right:
-        st.markdown("Paramètres Heston communs")
-        heston_kappa_common = float(st.session_state.get("heston_kappa_common", 2.0))
-        heston_theta_common = float(st.session_state.get("heston_theta_common", 0.04))
-        heston_eta_common = float(st.session_state.get("heston_eta_common", 0.5))
-        heston_rho_common = float(st.session_state.get("heston_rho_common", -0.7))
-        heston_v0_common = float(st.session_state.get("heston_v0_common", 0.04))
-        common_rdisp = float(st.session_state.get("common_rate", r_common))
-        common_qdisp = float(st.session_state.get("common_dividend", d_common))
-
-        st.markdown(
-            f"""
-            - κ = **{heston_kappa_common:.4f}**
-            - θ = **{heston_theta_common:.4f}**
-            - η = **{heston_eta_common:.4f}**
-            - ρ = **{heston_rho_common:.4f}**
-            - v0 = **{heston_v0_common:.4f}**
-            - S₀ (calibration) = **{float(st.session_state.get("common_spot", S0_common)):.4f}**
-            - r = **{common_rdisp:.4f}**
-            - q = **{common_qdisp:.4f}**
-            """
-        )
-
-    # Rafraîchir les valeurs en session (issues de la calibration ou des défauts)
-    st.session_state["heston_kappa_common"] = heston_kappa_common
-    st.session_state["heston_theta_common"] = heston_theta_common
-    st.session_state["heston_eta_common"] = heston_eta_common
-    st.session_state["heston_rho_common"] = heston_rho_common
-    st.session_state["heston_v0_common"] = heston_v0_common
+        pass  # plus d'affichage des paramètres Heston dans cette section
 
     heatmap_spot_values = _heatmap_axis(S0_common, heatmap_span)
     heatmap_strike_values = _heatmap_axis(K_common, heatmap_span)
@@ -5014,6 +4989,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "v0": float(st.session_state.get("heston_v0_common", 0.04)),
                     }
                 }
+                st.dataframe(
+                    pd.Series(misc_heston["heston_params"], name="Paramètre").to_frame(),
+                    use_container_width=True,
+                    hide_index=False,
+                )
                 render_add_to_dashboard_button(
                     product_label="Vanilla (Heston CM)",
                     option_char=option_char,
