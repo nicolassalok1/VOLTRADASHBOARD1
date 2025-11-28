@@ -73,6 +73,7 @@ CACHE_OPTIONS_HISTORY_FILE = DATASETS_DIR / "options_last_history.csv"
 CACHE_OPTIONS_CALLS_FILE = DATASETS_DIR / "options_last_calls.csv"
 CACHE_OPTIONS_PUTS_FILE = DATASETS_DIR / "options_last_puts.csv"
 CACHE_OPTIONS_META_FILE = DATASETS_DIR / "options_last_meta.json"
+HESTON_PARAMS_FILE = JSON_DIR / "heston_params.json"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
 sys.path.insert(0, str(NOTEBOOKS_SCRIPTS_DIR))
@@ -3287,6 +3288,41 @@ def run_app_options():
         fetch_btn = fetch_btn or auto_fetch
         st.divider()
 
+        # Tente de charger d'éventuels paramètres Heston persistés pour ce ticker
+        cached_heston_params = load_heston_params_from_json(ticker)
+        if cached_heston_params and not fetch_btn:
+            required_keys = {"kappa", "theta", "sigma", "rho", "v0"}
+            if not required_keys.issubset(cached_heston_params.keys()):
+                st.info("Cache Heston incomplet pour ce ticker – calibre le NN pour activer l'onglet.")
+            else:
+                st.info("Paramètres Heston trouvés dans le cache JSON – réutilisation sans recalibration.")
+                try:
+                    st.session_state["heston_kappa_common"] = float(cached_heston_params["kappa"])
+                    st.session_state["heston_theta_common"] = float(cached_heston_params["theta"])
+                    st.session_state["heston_eta_common"] = float(cached_heston_params["sigma"])
+                    st.session_state["heston_rho_common"] = float(cached_heston_params["rho"])
+                    st.session_state["heston_v0_common"] = float(cached_heston_params["v0"])
+                    st.session_state["carr_madan_calibrated"] = True
+                    # Recharge les appels/puts éventuellement en cache pour ce ticker
+                    if calls_df is None or puts_df is None or S0_ref is None:
+                        cached_calls, cached_puts, cached_S0, cached_r, cached_q = load_cached_option_chain(ticker)
+                        if cached_calls is not None and cached_puts is not None and cached_S0:
+                            state.heston_calls_df = cached_calls
+                            state.heston_puts_df = cached_puts
+                            state.heston_S0_ref = cached_S0
+                            calls_df = cached_calls
+                            puts_df = cached_puts
+                            S0_ref = cached_S0
+                            if cached_r is not None:
+                                st.session_state["common_rate"] = float(cached_r)
+                            if cached_q is not None:
+                                st.session_state["common_dividend"] = float(cached_q)
+                            st.session_state["heston_cboe_loaded_once"] = True
+                            st.info("Chaînes CBOE rechargées depuis le cache pour le ticker calibré.")
+                except Exception:
+                    # En cas de problème de parsing, on redemandera une calibration NN.
+                    st.info("Lecture des paramètres Heston en cache impossible – calibre le NN pour activer l'onglet.")
+
         if fetch_btn:
             try:
                 calls_df, puts_df, S0_ref, rf_rate, div_yield = load_cboe_data(ticker)
@@ -5191,6 +5227,14 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         st.session_state["heston_rho_common"] = params_dict["rho"]
                         st.session_state["heston_v0_common"] = params_dict["v0"]
                         st.session_state["carr_madan_calibrated"] = True
+                        # Persist Heston params dans un JSON par ticker
+                        params_to_save = params_dict | {
+                            "ticker": ticker,
+                            "S0_ref": float(S0_ref),
+                            "rf_rate": float(rf_rate),
+                            "dividend_yield": float(div_yield),
+                        }
+                        save_heston_params_to_json(ticker, params_to_save)
                         st.success("✓ Calibration terminée")
                         st.dataframe(pd.Series(params_dict, name="Paramètre").to_frame())
                         st.balloons()
@@ -5227,17 +5271,17 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 try:
                     with st.spinner("Calcul Heston Carr–Madan..."):
                         price_cm = price_heston_carr_madan(
-                            S0=float(common_spot_value),
-                            K=float(common_strike_value),
-                            T=float(common_maturity_value),
-                            r=float(common_rate_value),
-                            q=float(d_common),
+                            S0=float(S0_h),
+                            K=float(K_slider_h),
+                            T=float(T_slider_h),
+                            r=float(r_h),
+                            q=float(d_h),
                             kappa=float(st.session_state.get("heston_kappa_common", 0.0)),
                             theta=float(st.session_state.get("heston_theta_common", 0.0)),
                             sigma=float(st.session_state.get("heston_eta_common", 0.0)),
                             rho=float(st.session_state.get("heston_rho_common", 0.0)),
                             v0=float(st.session_state.get("heston_v0_common", 0.0)),
-                            option_type=option_char,
+                            option_type=opt_type_h,
                         )
                     st.session_state["eu_price_heston"] = price_cm
                 except Exception as exc:
@@ -5246,28 +5290,29 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if st.session_state.get("carr_madan_calibrated", False):
                 try:
                     heatmap_status = st.info("Calcul surface IV Heston…")
-                    k_vals = _heatmap_axis(common_strike_value, span_mc)
-                    t_vals = _heatmap_axis(t_center_h, t_band_h)
+                    # Centre la grille autour des sliders K/T actuels
+                    k_vals = _heatmap_axis(float(K_slider_h), span_mc)
+                    t_vals = _heatmap_axis(float(T_slider_h), t_band_h)
 
                     call_matrix = np.zeros((len(t_vals), len(k_vals)), dtype=float)
                     put_matrix = np.zeros_like(call_matrix)
                     for i_t, t_val in enumerate(t_vals):
                         for j_k, k_val in enumerate(k_vals):
                             call_matrix[i_t, j_k] = _carr_madan_price(
-                                S0=float(common_spot_value),
+                                S0=float(S0_h),
                                 K=float(k_val),
                                 T=float(t_val),
-                                r=float(common_rate_value),
-                                q=float(d_common),
+                                r=float(r_h),
+                                q=float(d_h),
                                 opt_char="c",
                                 params=params_heston,
                             )
                             put_matrix[i_t, j_k] = _carr_madan_price(
-                                S0=float(common_spot_value),
+                                S0=float(S0_h),
                                 K=float(k_val),
                                 T=float(t_val),
-                                r=float(common_rate_value),
-                                q=float(d_common),
+                                r=float(r_h),
+                                q=float(d_h),
                                 opt_char="p",
                                 params=params_heston,
                             )
@@ -5280,10 +5325,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         for j_k, k_val in enumerate(k_vals):
                             iv_grid[i_t, j_k] = implied_vol_option(
                                 price=float(price_grid[i_t, j_k]),
-                                S=float(common_spot_value),
+                                S=float(S0_h),
                                 K=float(k_val),
                                 T=float(t_val),
-                                r=float(common_rate_value),
+                                r=float(r_h),
                                 option_type="call" if opt_char_local == "c" else "put",
                             )
                     heatmap_status.empty()
@@ -8605,6 +8650,44 @@ def load_cached_option_chain(ticker: str) -> tuple[pd.DataFrame | None, pd.DataF
         return calls_df, puts_df, float(meta.get("S0_ref") or 0.0), float(meta.get("r") or 0.0), float(meta.get("q") or 0.0)
     except Exception:
         return None, None, None, None, None
+
+
+def load_heston_params_from_json(ticker: str) -> dict | None:
+    """Charge les paramètres Heston persistés pour un ticker donné, s'ils existent."""
+    tkr = (ticker or "").strip().upper()
+    if not tkr or not HESTON_PARAMS_FILE.exists():
+        return None
+    try:
+        with HESTON_PARAMS_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        params = data.get(tkr)
+        if not isinstance(params, dict):
+            return None
+        return params
+    except Exception:
+        return None
+
+
+def save_heston_params_to_json(ticker: str, params: dict) -> None:
+    """Persiste les paramètres Heston associés à un ticker (JSON dénormalisé)."""
+    tkr = (ticker or "").strip().upper()
+    if not tkr:
+        return
+    try:
+        HESTON_PARAMS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if HESTON_PARAMS_FILE.exists():
+            try:
+                with HESTON_PARAMS_FILE.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        else:
+            data = {}
+        data[tkr] = params
+        with HESTON_PARAMS_FILE.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 def fetch_option_history_to_cache(ticker: str) -> pd.DataFrame:
