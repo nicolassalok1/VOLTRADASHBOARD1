@@ -2990,6 +2990,103 @@ def run_app_options():
                 grid[mask] = griddata(pts, vals, (kk_grid[mask], tt_grid[mask]), method="nearest")
         return grid
 
+    def _get_cached_iv_for(K_target: float, T_target: float, option_type: str = "call") -> float | None:
+        """
+        Récupère une vol implicite depuis les données CBOE en cache (session ou CSV),
+        en cherchant la maturité la plus proche de T_target puis le K le plus proche.
+        """
+        opt_type = option_type.lower()
+        calls_df = st.session_state.get("heston_calls_df")
+        puts_df = st.session_state.get("heston_puts_df")
+        if opt_type == "put":
+            primary_df, secondary_df = puts_df, calls_df
+        else:
+            primary_df, secondary_df = calls_df, puts_df
+
+        dfs: list[pd.DataFrame] = []
+        for df in (primary_df, secondary_df):
+            if df is not None and hasattr(df, "empty") and not df.empty:
+                dfs.append(df)
+
+        if not dfs:
+            cache_path = CACHE_OPTIONS_PUTS_FILE if opt_type == "put" else CACHE_OPTIONS_CALLS_FILE
+            try:
+                df_cached = pd.read_csv(cache_path)
+                if not df_cached.empty:
+                    dfs.append(df_cached)
+            except Exception:
+                pass
+
+        def _extract_iv(row: pd.Series) -> float | None:
+            for col in ("iv_market", "iv", "impliedVolatility", "implied_vol"):
+                if col in row and pd.notna(row[col]) and float(row[col]) > 0:
+                    return float(row[col])
+            price_col = "P_mkt" if opt_type == "put" else "C_mkt"
+            if price_col in row and "S0" in row and "T" in row and "K" in row:
+                try:
+                    price_val = float(row[price_col])
+                    if price_val <= 0:
+                        return None
+                    r_val = float(st.session_state.get("common_rate", 0.02))
+                    return implied_vol_option(
+                        price=price_val,
+                        S=float(row["S0"]),
+                        K=float(row["K"]),
+                        T=float(row["T"]),
+                        r=r_val,
+                        option_type="put" if opt_type == "put" else "call",
+                    )
+                except Exception:
+                    return None
+            return None
+
+        for df in dfs:
+            if df is None or df.empty or "K" not in df.columns or "T" not in df.columns:
+                continue
+            df_valid = df.dropna(subset=["K", "T"]).copy()
+            df_valid = df_valid[(df_valid["K"] > 0) & (df_valid["T"] > 0)]
+            if df_valid.empty:
+                continue
+            df_valid["t_diff"] = (df_valid["T"] - T_target).abs()
+            df_valid["k_diff"] = (df_valid["K"] - K_target).abs()
+            best_row = df_valid.sort_values(["t_diff", "k_diff"]).iloc[0]
+            iv_val = _extract_iv(best_row)
+            if iv_val is not None and np.isfinite(iv_val) and iv_val > 0:
+                return float(iv_val)
+        return None
+
+    def _pick_default_T_near_one(k_ref: float) -> float:
+        """Choisit une maturité par défaut (proche de 1 an) en fonction du strike de référence."""
+        dfs: list[pd.DataFrame] = []
+        for df in (
+            st.session_state.get("heston_calls_df"),
+            st.session_state.get("heston_puts_df"),
+        ):
+            if df is not None and hasattr(df, "empty") and not df.empty:
+                dfs.append(df)
+        if not dfs:
+            try:
+                df_cached = pd.read_csv(CACHE_OPTIONS_CALLS_FILE)
+                if not df_cached.empty:
+                    dfs.append(df_cached)
+            except Exception:
+                pass
+        for df in dfs:
+            df_valid = df.dropna(subset=["K", "T"])
+            df_valid = df_valid[df_valid["T"] > 0]
+            if df_valid.empty:
+                continue
+            df_valid = df_valid.assign(
+                t_diff=(df_valid["T"] - 1.0).abs(),
+                k_diff=(df_valid["K"] - k_ref).abs(),
+            )
+            best = df_valid.sort_values(["t_diff", "k_diff"]).iloc[0]
+            return float(best["T"])
+        try:
+            return float(st.session_state.get("T_common", 1.0) or 1.0)
+        except Exception:
+            return 1.0
+
 
     def render_section_explainer(title: str, body: str) -> None:
         """No-op (explications cachées)."""
@@ -4741,6 +4838,12 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
             st.session_state["eu_T_slider_val"] = T_slider
             opt_type = "call" if option_char == "c" else "put"
+            iv_eu = _get_cached_iv_for(K_slider, T_slider, opt_type)
+            sigma_eu_eff = float(iv_eu) if iv_eu is not None and np.isfinite(iv_eu) and iv_eu > 0 else sigma_eu
+            if iv_eu is not None and np.isfinite(iv_eu) and iv_eu > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_eu:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
             premium_eu = _vanilla_price_with_dividend(
                 option_type=opt_type,
                 S0=float(common_spot_value),
@@ -4748,7 +4851,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 T=float(common_maturity_value),
                 r=float(common_rate_value),
                 dividend=float(d_common),
-                sigma=float(common_sigma_value),
+                sigma=float(sigma_eu_eff),
             )
             s_grid = np.linspace(max(0.1, K_slider * 0.4), K_slider * 1.6, 200)
             payoff_grid = np.maximum(s_grid - K_slider, 0.0) if opt_type == "call" else np.maximum(K_slider - s_grid, 0.0)
@@ -4794,7 +4897,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         K=float(K_slider),
                         r=float(common_rate_value),
                         q=float(d_common),
-                        sigma=float(common_sigma_value),
+                        sigma=float(sigma_eu_eff),
                         T=float(T_slider),
                     )
                 else:
@@ -4803,7 +4906,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         K=float(K_slider),
                         r=float(common_rate_value),
                         q=float(d_common),
-                        sigma=float(common_sigma_value),
+                        sigma=float(sigma_eu_eff),
                         T=float(T_slider),
                     )
             st.session_state["eu_price_bsm"] = price_bsm
@@ -4821,7 +4924,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 f"Paramètres utilisés pour le prix unique BSM : "
                 f"S0={common_spot_value:.4f}, K={float(K_slider):.4f}, "
                 f"T={float(T_slider):.4f}, r={common_rate_value:.4f}, "
-                f"d={float(d_common):.4f}, σ={common_sigma_value:.4f}"
+                f"d={float(d_common):.4f}, σ={sigma_eu_eff:.4f}"
             )
             
         with tab_heston:
@@ -4858,6 +4961,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             st.session_state["eu_T_slider_val"] = T_slider_h
 
             opt_type_h = "call" if opt_char_local == "c" else "put"
+            iv_h = _get_cached_iv_for(K_slider_h, T_slider_h, opt_type_h)
+            if iv_h is not None and np.isfinite(iv_h) and iv_h > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_h:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache.")
             price_heston_display: float | None = None
             if st.session_state.get("carr_madan_calibrated", False):
                 try:
@@ -5247,6 +5355,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             k_max_am = S0_common + 20.0
             k_default_am = float(round(S0_common))
             k_default_am = float(min(max(k_default_am, k_min_am), k_max_am))
+            t_default_am = _pick_default_T_near_one(k_default_am)
+            t_min_am = 0.05
+            t_max_am = float(max(0.5, t_default_am + 1.0, T_common + 0.5))
+            t_default_am = float(min(max(t_default_am, t_min_am), t_max_am))
             K_slider_am = st.slider(
                 "K (strike – Américain)",
                 min_value=k_min_am,
@@ -5255,6 +5367,20 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=max(0.01, float(S0_common) * 0.01),
                 key=_k("am_k_slider"),
             )
+            T_slider_am = st.slider(
+                "T (années – Américain)",
+                min_value=float(t_min_am),
+                max_value=float(t_max_am),
+                value=float(t_default_am),
+                step=0.01,
+                key=_k("am_T_slider"),
+            )
+            iv_am = _get_cached_iv_for(K_slider_am, T_slider_am, "call" if option_char == "c" else "put")
+            sigma_am = float(iv_am) if iv_am is not None and np.isfinite(iv_am) and iv_am > 0 else sigma_common
+            if iv_am is not None and np.isfinite(iv_am) and iv_am > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_am:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
             n_tree_am = st.number_input(
                 "Nombre de pas de l'arbre",
                 value=10,
@@ -5262,7 +5388,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("n_tree_am"),
                 help="Nombre de pas de temps utilisés dans l’arbre binomial CRR.",
             )
-            option_am_crr = Option(s0=S0_common, T=T_common, K=K_slider_am, call=cpflag_am == "Call")
+            option_am_crr = Option(s0=S0_common, T=T_slider_am, K=K_slider_am, call=cpflag_am == "Call")
             int_n_tree = int(n_tree_am)
             if int_n_tree > 10:
                 st.info("L'affichage peut devenir difficile à lire pour un nombre de pas supérieur à 10.")
@@ -5270,13 +5396,13 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 try:
                     option_am_single = Option(
                         s0=S0_common,
-                        T=T_common,
+                        T=T_slider_am,
                         K=K_slider_am,
                         call=(cpflag_am == 'Call'),
                     )
                     price_crr_single = crr_pricing(
                         r=r_common,
-                        sigma=sigma_common,
+                        sigma=sigma_am,
                         option=option_am_single,
                         n=int_n_tree,
                     )
@@ -5286,7 +5412,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         option_char=option_char,
                         price_value=price_crr_single,
                         strike=K_slider_am,
-                        maturity=T_common,
+                        maturity=T_slider_am,
                         key_prefix=_k("save_am_crr"),
                         spot=S0_common,
                     )
@@ -5303,13 +5429,13 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
             with st.spinner("Calcul de la heatmap CRR"):
                 call_heatmap_crr, put_heatmap_crr = _compute_american_crr_heatmaps(
-                    heatmap_spot_values,
-                    heatmap_strike_values,
-                    T_common,
-                    r_common,
-                    sigma_common,
-                    int_n_tree,
-                )
+                heatmap_spot_values,
+                heatmap_strike_values,
+                T_slider_am,
+                r_common,
+                sigma_am,
+                int_n_tree,
+            )
             _render_heatmaps_for_current_option(
                 "CRR",
                 call_heatmap_crr,
@@ -5319,8 +5445,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
             st.caption(
                 f"Paramètres utilisés pour CRR : "
-                f"S0={S0_common:.4f}, K={K_slider_am:.4f}, T={T_common:.4f}, "
-                f"r={r_common:.4f}, σ={sigma_common:.4f}, n={int_n_tree}"
+                f"S0={S0_common:.4f}, K={K_slider_am:.4f}, T={T_slider_am:.4f}, "
+                f"r={r_common:.4f}, σ={sigma_am:.4f}, n={int_n_tree}"
             )
 
         with tab_bermudan:
@@ -5328,6 +5454,40 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             option_label, option_char = opt_label_local_bmd, opt_char_local_bmd
             st.header("Option bermudéenne")
             _render_option_text("Option bermudéenne", "bermuda_payoff")
+            k_min_bmd = max(0.1, S0_common - 20.0)
+            k_max_bmd = S0_common + 20.0
+            k_default_bmd = float(round(S0_common))
+            k_default_bmd = float(min(max(k_default_bmd, k_min_bmd), k_max_bmd))
+            t_default_bmd = _pick_default_T_near_one(k_default_bmd)
+            t_min_bmd = 0.05
+            t_max_bmd = float(max(0.5, t_default_bmd + 1.0, T_common + 0.5))
+            t_default_bmd = float(min(max(t_default_bmd, t_min_bmd), t_max_bmd))
+            K_slider_bmd = st.slider(
+                "K (strike – Bermudan)",
+                min_value=k_min_bmd,
+                max_value=k_max_bmd,
+                value=k_default_bmd,
+                step=max(0.01, float(S0_common) * 0.01),
+                key=_k("bmd_k_slider"),
+            )
+            T_slider_bmd = st.slider(
+                "T (années – Bermudan)",
+                min_value=float(t_min_bmd),
+                max_value=float(t_max_bmd),
+                value=float(t_default_bmd),
+                step=0.01,
+                key=_k("bmd_T_slider"),
+            )
+            iv_bmd = _get_cached_iv_for(K_slider_bmd, T_slider_bmd, "call" if option_char == "c" else "put")
+            sigma_bmd = float(iv_bmd) if iv_bmd is not None and np.isfinite(iv_bmd) and iv_bmd > 0 else sigma_common
+            sigma_source_msg = (
+                f"σ implicite (cache) ≈ {sigma_bmd:.4f}" if sigma_bmd != sigma_common else f"σ par défaut ≈ {sigma_common:.4f}"
+            )
+            if iv_bmd is not None and np.isfinite(iv_bmd) and iv_bmd > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_bmd:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
+            st.caption(f"Paramètres Bermudan : K={K_slider_bmd:.4f} | T={T_slider_bmd:.4f} | {sigma_source_msg}")
 
             st.subheader("Longstaff–Schwartz (GBM)")
             render_method_explainer(
@@ -5374,11 +5534,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 try:
                     price_bmd_mc = price_bermudan_lsmc(
                         S0=S0_common,
-                        K=K_common,
-                        T=T_common,
+                        K=K_slider_bmd,
+                        T=T_slider_bmd,
                         r=r_common,
                         q=d_common,
-                        sigma=sigma_common,
+                        sigma=sigma_bmd,
                         cpflag=option_char,
                         M=int(n_steps_bmd),
                         N_paths=int(n_paths_bmd),
@@ -5391,8 +5551,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         product_label="Bermudan (LSMC)",
                         option_char=option_char,
                         price_value=price_bmd_mc,
-                        strike=K_common,
-                        maturity=T_common,
+                        strike=K_slider_bmd,
+                        maturity=T_slider_bmd,
                         key_prefix=_k("save_bmd_lsmc"),
                         spot=S0_common,
                         misc={
@@ -5401,6 +5561,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                             "n_steps": int(n_steps_bmd),
                             "n_ex_dates": int(n_ex_dates_bmd),
                             "degree": int(degree_bmd),
+                            "sigma_used": float(sigma_bmd),
                         },
                     )
                 except Exception as exc:
@@ -5456,9 +5617,9 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Typeflag": "Bmd",
                     "cpflag": option_char,
                     "S0": S0_common,
-                    "K": K_common,
-                    "T": T_common,
-                    "vol": sigma_common,
+                    "K": K_slider_bmd,
+                    "T": T_slider_bmd,
+                    "vol": sigma_bmd,
                     "r": r_common,
                     "d": d_common,
                     "n_spatial": int(n_spatial_bmd),
@@ -5476,8 +5637,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     product_label="Bermudan (PDE)",
                     option_char=option_char,
                     price_value=price_bmd_cn,
-                    strike=K_common,
-                    maturity=T_common,
+                    strike=K_slider_bmd,
+                    maturity=T_slider_bmd,
                     key_prefix=_k("save_bmd_cn"),
                     spot=S0_common,
                     misc={
@@ -5486,6 +5647,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "n_time": int(n_time_bmd),
                         "n_ex_dates": None if exercise_step_bmd is not None else int(n_ex_dates_cn),
                         "exercise_step": exercise_step_bmd,
+                        "sigma_used": float(sigma_bmd),
                     },
                 )
             except Exception as exc:
