@@ -2307,12 +2307,22 @@ def run_app_options():
                         f"TICKER{len(st.session_state['basket_tickers']) + 1}"
                     )
             with btn_col_remove:
+                removable = list(st.session_state["basket_tickers"])
+                remove_choice = st.selectbox(
+                    "Sélectionner un asset à retirer",
+                    removable if len(removable) > min_assets else ["(aucun)"],
+                    index=0 if len(removable) > min_assets else 0,
+                    key=_k("select_remove_asset"),
+                )
                 if st.button(
-                    "Retirer un asset",
+                    "Retirer l'asset sélectionné",
                     key=_k("btn_remove_asset"),
-                    disabled=len(st.session_state["basket_tickers"]) <= min_assets,
+                    disabled=len(st.session_state["basket_tickers"]) <= min_assets or remove_choice == "(aucun)",
                 ):
-                    st.session_state["basket_tickers"].pop()
+                    try:
+                        st.session_state["basket_tickers"].remove(remove_choice)
+                    except ValueError:
+                        pass
 
             tickers = []
             for i, default_tk in enumerate(st.session_state["basket_tickers"]):
@@ -6808,6 +6818,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             k_put_long = max(0.01, k_center - wing)
             k_call_long = k_center + wing
 
+            # Iron butterfly uses its own pricer (different from iron condor)
             view_dyn = view_iron_butterfly(
                 float(common_spot_value),
                 k_put_long,
@@ -6818,11 +6829,22 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 sigma=float(common_sigma_value),
                 T=float(common_maturity_value),
             )
-            premium = float(view_dyn.get("premium", 0.0))
+            premium_raw = price_iron_butterfly_bs(
+                float(common_spot_value),
+                k_put_long,
+                k_center,
+                k_call_long,
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                T=float(common_maturity_value),
+            )
+            premium = float(premium_raw)
+            price_display = abs(premium)
 
             s_grid = view_dyn["s_grid"]
             payoff_grid = view_dyn["payoff"]
-            pnl_grid = view_dyn["pnl"]
+            pnl_grid = view_dyn["payoff"] - premium
 
             fig, ax = plt.subplots(figsize=(7, 4))
             ax.plot(s_grid, payoff_grid, label="Payoff brut")
