@@ -63,6 +63,9 @@ NOTEBOOKS_SCRIPTS_DIR = APP_DIR / "notebooks" / "scripts"
 DATASETS_DIR = APP_DIR / "database" / "GPTab"
 DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_OPTIONS_HISTORY_FILE = DATASETS_DIR / "options_last_history.csv"
+CACHE_OPTIONS_CALLS_FILE = DATASETS_DIR / "options_last_calls.csv"
+CACHE_OPTIONS_PUTS_FILE = DATASETS_DIR / "options_last_puts.csv"
+CACHE_OPTIONS_META_FILE = DATASETS_DIR / "options_last_meta.json"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
 sys.path.insert(0, str(NOTEBOOKS_SCRIPTS_DIR))
@@ -3154,6 +3157,7 @@ def run_app_options():
                 st.session_state["common_dividend"] = float(div_yield)
                 st.info(f"📡 Données CBOE chargées pour {ticker} (cache)")
                 st.success(f"{len(calls_df)} calls, {len(puts_df)} puts | S0 ≈ {S0_ref:.2f}")
+                save_cached_option_chain(ticker, calls_df, puts_df, S0_ref, rf_rate, div_yield)
                 maturity_list = sorted(calls_df["T"].round(2).unique().tolist())
                 st.session_state["cboe_T_options"] = maturity_list
                 st.session_state["sidebar_maturity_options"] = maturity_list
@@ -3199,6 +3203,8 @@ def run_app_options():
                     "sigma_common": f"{prefills['sigma_common']:.4f}",
                 }
                 st.session_state["heston_cboe_loaded_once"] = True
+                # Refresh cached 1y history for this ticker
+                fetch_option_history_to_cache(ticker)
                 st.rerun()
             except Exception as exc:
                 st.error(f"❌ Erreur lors du téléchargement des données CBOE : {exc}")
@@ -3213,10 +3219,43 @@ def run_app_options():
         max_iters = 1000
         learning_rate = 0.005
 
-        # Bloque l'UI tant que les données CBOE ne sont pas chargées
+        # Si aucune donnée CBOE, on tente de s'appuyer sur le cache (chaines + historique)
+        cache_used = False
         if calls_df is None or puts_df is None or S0_ref is None:
+            cached_calls, cached_puts, cached_S0, cached_r, cached_q = load_cached_option_chain(ticker)
+            cached_tkr_hist, cached_hist_df = load_cached_option_history()
+            if cached_calls is not None and cached_puts is not None and cached_S0:
+                calls_df = cached_calls
+                puts_df = cached_puts
+                S0_ref = cached_S0
+                state.heston_calls_df = calls_df
+                state.heston_puts_df = puts_df
+                state.heston_S0_ref = S0_ref
+                if cached_r is not None:
+                    st.session_state["common_rate"] = float(cached_r)
+                if cached_q is not None:
+                    st.session_state["common_dividend"] = float(cached_q)
+                cache_used = True
+                st.warning("⚠️ Données CBOE non rafraîchies. Utilisation du cache options récent. Clique sur Refresh pour mettre à jour.")
+            elif cached_hist_df is not None and not cached_hist_df.empty:
+                S0_ref = float(cached_hist_df["Close"].iloc[-1])
+                state.heston_S0_ref = S0_ref
+                calls_df = pd.DataFrame(columns=["T", "K", "C_mkt", "iv_market"])
+                puts_df = pd.DataFrame(columns=["T", "K", "P_mkt", "iv_market"])
+                cache_used = True
+                st.warning("⚠️ Données CBOE absentes. Utilisation du cache 1 an des clôtures. Clique sur Refresh si besoin.")
+
+        # Si aucun cache ni données disponibles, on bloque l'affichage
+        if (calls_df is None and puts_df is None) and S0_ref is None:
             st.warning("⚠️ Charge d'abord les données du ticker (bouton « Récupérer les données du ticker ») pour activer l'onglet Options.")
             return
+
+        if cache_used:
+            st.session_state["heston_cboe_loaded_once"] = True
+            if calls_df is not None and not calls_df.empty and "T" in calls_df.columns:
+                maturity_list = sorted(calls_df["T"].round(2).unique().tolist())
+                st.session_state["cboe_T_options"] = maturity_list
+                st.session_state["sidebar_maturity_options"] = maturity_list
 
         col_nn, col_modes = st.columns(2)
         with col_nn:
@@ -7887,6 +7926,64 @@ def save_cached_option_history(ticker: str, df: pd.DataFrame) -> None:
         df.to_csv(CACHE_OPTIONS_HISTORY_FILE, index_label="Date")
     except Exception:
         pass
+
+
+def save_cached_option_chain(ticker: str, calls_df: pd.DataFrame, puts_df: pd.DataFrame, S0_ref: float, r: float, q: float) -> None:
+    """Persist last downloaded CBOE chain for reuse across sessions."""
+    try:
+        CACHE_OPTIONS_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if calls_df is not None and not calls_df.empty:
+            calls_df.to_csv(CACHE_OPTIONS_CALLS_FILE, index=False)
+        if puts_df is not None and not puts_df.empty:
+            puts_df.to_csv(CACHE_OPTIONS_PUTS_FILE, index=False)
+        meta = {"ticker": ticker, "S0_ref": S0_ref, "r": r, "q": q}
+        with open(CACHE_OPTIONS_META_FILE, "w") as f:
+            json.dump(meta, f)
+    except Exception:
+        pass
+
+
+def load_cached_option_chain(ticker: str) -> tuple[pd.DataFrame | None, pd.DataFrame | None, float | None, float | None, float | None]:
+    """Load cached CBOE chain if it matches the requested ticker."""
+    tkr = (ticker or "").strip().upper()
+    try:
+        with open(CACHE_OPTIONS_META_FILE, "r") as f:
+            meta = json.load(f)
+        if meta.get("ticker", "").upper() != tkr or not tkr:
+            return None, None, None, None, None
+        calls_df = pd.read_csv(CACHE_OPTIONS_CALLS_FILE) if CACHE_OPTIONS_CALLS_FILE.exists() else None
+        puts_df = pd.read_csv(CACHE_OPTIONS_PUTS_FILE) if CACHE_OPTIONS_PUTS_FILE.exists() else None
+        return calls_df, puts_df, float(meta.get("S0_ref") or 0.0), float(meta.get("r") or 0.0), float(meta.get("q") or 0.0)
+    except Exception:
+        return None, None, None, None, None
+
+
+def fetch_option_history_to_cache(ticker: str) -> pd.DataFrame:
+    """
+    Download 1y daily closes for ticker via CLI helper and persist to cache CSV.
+    Returns the DataFrame (may be empty on failure).
+    """
+    tkr = (ticker or "").strip().upper()
+    if not tkr:
+        return pd.DataFrame()
+    cli_path = SCRIPTS_DIR / "fetch_history_cli.py"
+    hist_df = pd.DataFrame()
+    try:
+        result = subprocess.run(
+            [sys.executable, str(cli_path), "--ticker", tkr, "--period", "1y", "--interval", "1d"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout:
+            hist_df = pd.read_csv(io.StringIO(result.stdout))
+            if "Date" in hist_df.columns:
+                hist_df["Date"] = pd.to_datetime(hist_df["Date"])
+                hist_df.set_index("Date", inplace=True)
+            save_cached_option_history(tkr, hist_df)
+    except Exception:
+        pass
+    return hist_df
 def load_equities():
     """Load configured trading systems (equities) from disk; returns {} on failure."""
     try:
