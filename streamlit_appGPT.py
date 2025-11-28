@@ -4776,7 +4776,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
             price = float(premium)
             st.markdown("### Ajouter au dashboard")
-            st.metric("Prix calculé", f"${price:.6f}")
+            st.metric("Prix calculé", f"${abs(price):.6f}")
 
             underlying = (
                 st.session_state.get("heston_cboe_ticker")
@@ -4841,6 +4841,15 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
         with tab_grp_exotics:
             tab_digital, tab_asset_on, tab_chooser, tab_quanto, tab_rainbow = st.tabs(["Digital", "Asset-or-nothing", "Chooser", "Quanto", "Rainbow"])
+
+        with tab_grp_basket:
+            ui_basket_surface(
+                spot_common=common_spot_value,
+                maturity_common=common_maturity_value,
+                rate_common=common_rate_value,
+                strike_common=common_strike_value,
+                key_prefix=_k("basket"),
+            )
 
         with tab_european:
             st.header("Option européenne")
@@ -5378,6 +5387,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 span=span_lb,
             )
             premium = float(view_dyn.get("premium", 0.0))
+            price_display = abs(premium)
+            price_display = abs(premium)
             s_grid = view_dyn["s_grid"]
             payoff_grid = view_dyn["payoff"]
             pnl_grid = view_dyn["pnl"]
@@ -5623,10 +5634,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             st.pyplot(fig, clear_figure=True)
 
             st.session_state[_k("iron_condor_pre_price")] = premium
-            price = float(premium)
+            price = float(price_display)
 
             st.markdown("### Ajouter au dashboard")
-            st.metric("Prix calculé", f"${price:.6f}")
+            st.metric("Prix calculé", f"${price_display:.6f}")
 
             underlying = (
                 st.session_state.get("heston_cboe_ticker")
@@ -5656,7 +5667,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "strike2": float(k_call_long),
                     "expiration": expiration_dt.isoformat(),
                     "quantity": int(qty),
-                    "avg_price": price,
+                    "avg_price": price_display,
                     "side": side,
                     "S0": float(common_spot_value),
                     "maturity_years": common_maturity_value,
@@ -5667,7 +5678,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         {"option_type": "call", "strike": float(k_call_long)},
                     ],
                     "T_0": today.isoformat(),
-                    "price": price,
+                    "price": price_display,
                     "misc": {
                         "structure": "Iron Condor",
                         "legs": [
@@ -5676,6 +5687,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                             {"option_type": "call", "strike": float(k_call_short)},
                             {"option_type": "call", "strike": float(k_call_long)},
                         ],
+                        "premium_raw": float(premium),
                         "spot_at_pricing": float(common_spot_value),
                     },
                 }
@@ -6824,10 +6836,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             st.pyplot(fig, clear_figure=True)
 
             st.session_state[_k("iron_bfly_pre_price")] = premium
-            price = float(premium)
+            price = float(price_display)
 
             st.markdown("### Ajouter au dashboard")
-            st.metric("Prix calculé", f"${price:.6f}")
+            st.metric("Prix calculé", f"${price_display:.6f}")
 
             underlying = (
                 st.session_state.get("heston_cboe_ticker")
@@ -6854,7 +6866,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "strike2": float(k_call_long),
                     "expiration": expiration_dt.isoformat(),
                     "quantity": int(qty),
-                    "avg_price": price,
+                    "avg_price": price_display,
                     "side": side,
                     "S0": float(common_spot_value),
                     "maturity_years": common_maturity_value,
@@ -6865,7 +6877,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         {"option_type": "call", "strike": float(k_call_long)},
                     ],
                     "T_0": today.isoformat(),
-                    "price": price,
+                    "price": price_display,
                     "misc": {
                         "structure": "Iron butterfly",
                         "legs": [
@@ -6874,6 +6886,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                             {"option_type": "call", "strike": float(k_center)},
                             {"option_type": "call", "strike": float(k_call_long)},
                         ],
+                        "premium_raw": float(premium),
                         "spot_at_pricing": float(common_spot_value),
                     },
                 }
@@ -7412,7 +7425,17 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             floor_val = st.slider("Floor", min_value=-0.5, max_value=0.5, value=0.0, step=0.01, key=_k("cliquet_floor"))
             cap_val = st.slider("Cap", min_value=0.0, max_value=0.5, value=0.1, step=0.01, key=_k("cliquet_cap"))
 
-            view_dyn = view_cliquet(s0_path, floor=floor_val, cap=cap_val)
+            view_dyn = view_cliquet(
+                s0_path,
+                floor=floor_val,
+                cap=cap_val,
+                T=float(common_maturity_value),
+                r=float(common_rate_value),
+                q=float(d_common),
+                sigma=float(common_sigma_value),
+                n_periods=12,
+                n_paths=4000,
+            )
             premium = float(view_dyn.get("premium", 0.0))
             s_grid = view_dyn["s_grid"]
             payoff_grid = view_dyn["payoff"]

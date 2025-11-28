@@ -455,8 +455,53 @@ def payoff_cliquet(spot_T, spot_0: float, floor: float = 0.0, cap: float = 0.1):
     return max(capped, 0.0)
 
 
-def view_cliquet(s0: float, floor: float = 0.0, cap: float = 0.1, span: float = 0.5, n: int = 300):
-    premium = payoff_cliquet(s0, s0, floor=floor, cap=cap)
+def view_cliquet(
+    s0: float,
+    floor: float = 0.0,
+    cap: float = 0.1,
+    span: float = 0.5,
+    n: int = 300,
+    T: float = DEFAULT_T,
+    r: float = DEFAULT_R,
+    q: float = DEFAULT_Q,
+    sigma: float = DEFAULT_SIGMA,
+    n_periods: int = 12,
+    n_paths: int = 4000,
+    seed: int = 42,
+):
+    def _cliquet_mc(
+        S0: float,
+        r: float,
+        q: float,
+        sigma: float,
+        T: float,
+        n_periods: int,
+        cap: float,
+        floor: float,
+        n_paths: int,
+        seed: int,
+    ) -> float:
+        if n_periods <= 0 or n_paths <= 0 or T <= 0 or sigma <= 0 or S0 <= 0:
+            return 0.0
+        rng = np.random.default_rng(seed)
+        dt = T / n_periods
+        drift = (r - q - 0.5 * sigma * sigma) * dt
+        diff = sigma * math.sqrt(dt)
+        disc = math.exp(-r * T)
+        payoffs = []
+        for _ in range(n_paths):
+            s = S0
+            coupons = []
+            for _ in range(n_periods):
+                z = rng.normal()
+                s_next = s * math.exp(drift + diff * z)
+                ret = (s_next / s) - 1.0
+                coupons.append(np.clip(ret, floor, cap))
+                s = s_next
+            payoffs.append(sum(coupons))
+        return float(disc * np.mean(payoffs))
+
+    premium = _cliquet_mc(s0, r, q, sigma, T, n_periods, cap, floor, n_paths, seed)
     s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
     payoff_grid = np.array([payoff_cliquet(s, s0, floor=floor, cap=cap) for s in s_grid])
     pnl_grid = payoff_grid - premium
@@ -489,11 +534,76 @@ def view_barrier(
     binary: bool = False,
     span: float = 0.5,
     n: int = 300,
+    n_paths: int = 8000,
+    n_steps: int = 120,
+    seed: int = 42,
     **kwargs,
 ):
+    """
+    Monte Carlo pricing for a simple barrier (in/out, up/down, vanilla or binary).
+    Displays deterministic payoff curves while using MC for the premium to avoid 0 pricing.
+    """
+    def price_barrier_mc(
+        S0: float,
+        K: float,
+        B: float,
+        T: float,
+        r: float,
+        q: float,
+        sigma: float,
+        option_type: str,
+        direction: str,
+        knock: str,
+        payout: float,
+        binary: bool,
+        n_paths: int,
+        n_steps: int,
+        seed: int,
+    ) -> float:
+        if S0 <= 0 or K <= 0 or B <= 0 or T <= 0 or sigma <= 0 or n_paths <= 0 or n_steps <= 0:
+            # Fallback: intrinsic masked by barrier condition at S0
+            return float(
+                np.asarray(
+                    payoff_barrier(S0, K, B, option_type=option_type, direction=direction, knock=knock, payout=payout, binary=binary)
+                ).item()
+            )
+        dt = T / n_steps
+        drift = (r - q - 0.5 * sigma * sigma) * dt
+        diff = sigma * math.sqrt(dt)
+        rng = np.random.default_rng(seed)
+        Z = rng.standard_normal(size=(n_paths, n_steps))
+        log_paths = math.log(S0) + np.cumsum(drift + diff * Z, axis=1)
+        paths = np.exp(log_paths)
+        # include S0 for barrier monitoring
+        paths = np.concatenate([np.full((n_paths, 1), S0), paths], axis=1)
+        hit = np.max(paths, axis=1) >= B if direction == "up" else np.min(paths, axis=1) <= B
+        ST = paths[:, -1]
+        if binary:
+            payoff = payout * np.where(hit if knock == "in" else ~hit, 1.0, 0.0)
+        else:
+            base = np.maximum(ST - K, 0.0) if option_type == "call" else np.maximum(K - ST, 0.0)
+            payoff = base * np.where(hit if knock == "in" else ~hit, 1.0, 0.0)
+        return float(np.exp(-r * T) * np.mean(payoff))
+
     s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
     payoff_grid = payoff_barrier(s_grid, strike, barrier, option_type=option_type, direction=direction, knock=knock, payout=payout, binary=binary)
-    premium = float(np.asarray(payoff_barrier(s0, strike, barrier, option_type=option_type, direction=direction, knock=knock, payout=payout, binary=binary)).item())
+    premium = price_barrier_mc(
+        S0=s0,
+        K=strike,
+        B=barrier,
+        T=float(kwargs.get("T", 1.0) or 1.0),
+        r=float(kwargs.get("r", DEFAULT_R) or DEFAULT_R),
+        q=float(kwargs.get("q", DEFAULT_Q) or DEFAULT_Q),
+        sigma=float(kwargs.get("sigma", DEFAULT_SIGMA) or DEFAULT_SIGMA),
+        option_type=option_type,
+        direction=direction,
+        knock=knock,
+        payout=payout,
+        binary=binary,
+        n_paths=int(n_paths),
+        n_steps=int(n_steps),
+        seed=int(seed),
+    )
     pnl_grid = payoff_grid - premium
     bes = _find_breakevens_from_grid(s_grid, pnl_grid)
     return {"s_grid": s_grid, "payoff": payoff_grid, "pnl": pnl_grid, "premium": premium, "breakevens": bes}
