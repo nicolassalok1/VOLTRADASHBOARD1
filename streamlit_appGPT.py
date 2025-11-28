@@ -5243,6 +5243,18 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "- Recursion backward avec exercice optimal.\n"
                 ),
             )
+            k_min_am = max(0.1, S0_common - 20.0)
+            k_max_am = S0_common + 20.0
+            k_default_am = float(round(S0_common))
+            k_default_am = float(min(max(k_default_am, k_min_am), k_max_am))
+            K_slider_am = st.slider(
+                "K (strike – Américain)",
+                min_value=k_min_am,
+                max_value=k_max_am,
+                value=k_default_am,
+                step=max(0.01, float(S0_common) * 0.01),
+                key=_k("am_k_slider"),
+            )
             n_tree_am = st.number_input(
                 "Nombre de pas de l'arbre",
                 value=10,
@@ -5250,7 +5262,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("n_tree_am"),
                 help="Nombre de pas de temps utilisés dans l’arbre binomial CRR.",
             )
-            option_am_crr = Option(s0=S0_common, T=T_common, K=K_common, call=cpflag_am == "Call")
+            option_am_crr = Option(s0=S0_common, T=T_common, K=K_slider_am, call=cpflag_am == "Call")
             int_n_tree = int(n_tree_am)
             if int_n_tree > 10:
                 st.info("L'affichage peut devenir difficile à lire pour un nombre de pas supérieur à 10.")
@@ -5259,7 +5271,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     option_am_single = Option(
                         s0=S0_common,
                         T=T_common,
-                        K=K_common,
+                        K=K_slider_am,
                         call=(cpflag_am == 'Call'),
                     )
                     price_crr_single = crr_pricing(
@@ -5273,7 +5285,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         product_label="American (CRR)",
                         option_char=option_char,
                         price_value=price_crr_single,
-                        strike=K_common,
+                        strike=K_slider_am,
                         maturity=T_common,
                         key_prefix=_k("save_am_crr"),
                         spot=S0_common,
@@ -5307,7 +5319,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
             st.caption(
                 f"Paramètres utilisés pour CRR : "
-                f"S0={S0_common:.4f}, K={K_common:.4f}, T={T_common:.4f}, "
+                f"S0={S0_common:.4f}, K={K_slider_am:.4f}, T={T_common:.4f}, "
                 f"r={r_common:.4f}, σ={sigma_common:.4f}, n={int_n_tree}"
             )
 
