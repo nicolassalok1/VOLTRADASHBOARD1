@@ -76,6 +76,8 @@ from pricing import (
     price_put_spread_bs,
     price_straddle_bs,
     price_strangle_bs,
+    view_asian_arith,
+    view_asian_geom,
     view_asset_or_nothing,
     view_barrier,
     view_butterfly,
@@ -88,8 +90,11 @@ from pricing import (
     view_forward_start,
     view_iron_butterfly,
     view_iron_condor,
+    view_lookback,
+    view_lookback_fixed,
     view_put_spread,
     view_quanto,
+    view_cliquet,
     view_rainbow,
     view_straddle,
     view_strangle,
@@ -5303,245 +5308,164 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     f"r={r_common:.4f}, σ={sigma_common:.4f}, n={int_n_tree}"
                 )
 
+        # Données SPY 1 an pour les onglets path-dependent (valeur de référence S0)
+        spy_close_path = None
+        s0_path = float(common_spot_value)
+        try:
+            from pricing import fetch_spy_history
+
+            spy_close_path = fetch_spy_history()
+        except Exception:
+            spy_close_path = None
+        if spy_close_path is not None and not getattr(spy_close_path, "empty", True):
+            s0_path = float(spy_close_path.iloc[-1])
+        else:
+            spy_close_path = pd.Series([s0_path], index=pd.Index([datetime.date.today()]), name="Close")
 
         with tab_lookback:
-            _render_option_text("Lookback floating (approx payoff)", "lookback_graph")
-            st.header("Options lookback (floating strike)")
-            render_unlock_sidebar_button("tab_lookback", "🔓 Réactiver T (onglet Lookback)")
-            lb_run_flag = st.session_state.get(_k("run_path_lookback_done"), False)
-            if not lb_run_flag:
-                if st.button("🚀 Lancer tous les pricings Lookback", key=_k("run_path_lookback_btn"), type="primary"):
-                    st.session_state[_k("run_path_lookback_done")] = True
-                    lb_run_flag = True
-                    st.rerun()
-            if lb_run_flag:
-                render_general_definition_explainer(
-                    "🔍 Comprendre les options lookback",
-                    (
-                        "- **Payoff dépendant du chemin** : une option lookback ne dépend plus uniquement de `S_T`, mais de l'historique complet de la trajectoire du sous‑jacent (par exemple de son maximum ou de son minimum atteint avant l'échéance).\n"
-                        "- **Floating strike** : dans cet onglet, on considère des structures où le strike effectif est défini à partir d'un extrême de la trajectoire, par exemple le maximum historique pour un put, ou le minimum pour un call.\n"
-                        "- **Intérêt intuitif** : ce type d'option permet de \"regarder en arrière\" pour déterminer le niveau de référence du contrat, offrant une protection renforcée contre des mouvements extrêmes défavorables.\n"
-                        "- **Dimension temporelle** : plus la maturité est longue, plus le sous‑jacent a de chances de visiter des extrêmes éloignés, ce qui impacte directement le niveau du payoff.\n"
-                        "- **Objectif de cet onglet** : comparer une formule fermée (lorsqu'elle est disponible) à une approche Monte Carlo pour des options lookback, et visualiser l'effet des paramètres via des heatmaps Spot × Maturité."
-                    ),
+            st.subheader("Lookback floating – vue Notebook")
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_lb = st.selectbox("Type", ["call", "put"], key=_k("lb_type"))
+                min_lb = st.slider(
+                    "Min path",
+                    min_value=0.5 * s0_path,
+                    max_value=1.0 * s0_path,
+                    value=0.9 * s0_path,
+                    step=0.5,
+                    key=_k("lb_min"),
                 )
-                st.caption(
-                    "Les heatmaps affichent les prix lookback sur un carré Spot × Maturité centré autour des valeurs définies dans la barre latérale."
+                max_lb = st.slider(
+                    "Max path",
+                    min_value=1.0 * s0_path,
+                    max_value=1.6 * s0_path,
+                    value=1.1 * s0_path,
+                    step=0.5,
+                    key=_k("lb_max"),
                 )
+            with col2:
+                span_lb = st.slider("Span payoff (%)", min_value=0.1, max_value=1.0, value=0.5, step=0.05, key=_k("lb_span"))
 
-                st.subheader("Formule exacte")
-                render_method_explainer(
-                    "📗 Méthode analytique pour lookback",
-                    (
-                        "- **Étape 1 – Choix du modèle sous‑jacent** : on se place dans le cadre Black–Scholes standard avec volatilité constante `σ`, taux sans risque `r` et éventuellement dividende continu. Le sous‑jacent suit un mouvement brownien géométrique.\n"
-                        "- **Étape 2 – Caractérisation des extrêmes** : on utilise des résultats de théorie des processus stochastiques sur la distribution du maximum (ou minimum) d’un mouvement brownien géométrique sur un horizon `[0, T]`.\n"
-                        "- **Étape 3 – Réécriture du payoff** : le payoff lookback (par exemple basé sur `max_t S_t` ou `min_t S_t`) est réécrit de manière à isoler des termes qui ressemblent à des payoffs d’options européennes classiques, plus des termes correctifs dépendant des extrêmes.\n"
-                        "- **Étape 4 – Intégration analytique** : à partir de cette réécriture, on calcule l’espérance neutre au risque de ce payoff en intégrant par rapport aux densités des extrêmes et du sous‑jacent. On obtient des formules fermées impliquant des fonctions de répartition de la loi normale et des combinaisons exponentielles.\n"
-                        "- **Étape 5 – Implémentation numérique** : les formules fermées sont implémentées sous forme de fonctions vectorisées qui prennent en entrée `(S0, T, σ, r, …)` et renvoient directement le prix de l’option lookback pour chaque point de la grille Spot × Maturité.\n"
-                        "- **Étape 6 – Construction de la heatmap** : pour chaque valeur de `S0` et `T` de la grille, la formule analytique est évaluée, ce qui remplit une matrice de prix. Cette matrice est ensuite affichée sous forme de carte de chaleur.\n"
-                        "- **Étape 7 – Rôle de benchmark** : cette solution analytique sert de référence \"exacte\" pour valider la méthode Monte Carlo : en comparant les deux surfaces, on quantifie l’erreur de simulation et on ajuste le nombre d’itérations ou la granularité temporelle si nécessaire."
-                    ),
-                )
-                render_inputs_explainer(
-                    "🔧 Paramètres utilisés – Lookback exact",
-                    (
-                        "- **\"S0 (spot)\"** : fixe le centre de l’axe des spots de la heatmap sur lequel la formule exacte est évaluée.\n"
-                        "- **\"T (maturité, années)\"** : fournit les maturités à partir desquelles on construit l’axe vertical de la heatmap.\n"
-                        "- **\"t (temps courant)\"** : champ numérique permettant de considérer une option lookback déjà en cours de vie (temps écoulé depuis l’émission).\n"
-                        "- **\"Taux sans risque r\"** : utilisé pour actualiser l’espérance du payoff dans la formule fermée.\n"
-                        "- **\"Volatilité σ\"** : volatilité constante supposée par le modèle BSM sous‑jacent."
-                    ),
-                )
-                t0_lb = st.number_input(
-                    "t (temps courant)",
-                    value=0.0,
-                    min_value=0.0,
-                    key=_k("t0_lb_exact"),
-                    help="Temps déjà écoulé depuis l’émission de l’option lookback (en années).",
-                )
-                r_lb = max(r_common, 1e-6)
-                with st.expander("📈 Prix lookback exact", expanded=False):
-                    try:
-                        with st.spinner("Calcul du prix exact..."):
-                            lookback_opt = lookback_call_option(
-                                T=float(T_common),
-                                t=float(t0_lb),
-                                S0=float(common_spot_value),
-                                r=float(r_lb),
-                                sigma=float(sigma_common),
-                            )
-                            price_lb_exact = float(lookback_opt.price_exact())
-                        st.success(f"Prix lookback (formule exacte) = {price_lb_exact:.6f}")
-                    except Exception as exc:
-                        st.error(f"Erreur lookback (formule exacte) : {exc}")
-                st.caption(
-                    f"Paramètres utilisés pour le prix lookback exact : "
-                    f"S0={common_spot_value:.4f}, T={T_common:.4f}, r={r_lb:.4f}, σ={sigma_common:.4f}, t={t0_lb:.4f}"
-                )
-                with st.spinner("Calcul de la heatmap exacte"):
-                    heatmap_lb_exact = _compute_lookback_exact_heatmap(
-                        heatmap_spot_values,
-                        heatmap_maturity_values,
-                        t0_lb,
-                        r_lb,
-                        sigma_common,
-                    )
-                st.write("Heatmap Lookback (formule exacte)")
-                _render_heatmap(heatmap_lb_exact, heatmap_spot_values, heatmap_maturity_values, "Prix Lookback (Exact)")
+            view_dyn = view_lookback(
+                s0_path,
+                min_lb,
+                max_lb,
+                option_type=option_type_lb,
+                span=span_lb,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_path, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
 
-                st.divider()
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(min_lb, color="teal", linestyle=":", label=f"Min = {min_lb:.2f}")
+            ax_ts.axhline(max_lb, color="gray", linestyle="--", label=f"Max = {max_lb:.2f}")
+            ax_ts.axhline(s0_path, color="firebrick", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Lookback)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
 
-                st.subheader("Monte Carlo lookback")
-                render_method_explainer(
-                    "🎲 Méthode Monte Carlo pour lookback",
-                    (
-                        "- **Étape 1 – Grille temporelle** : on découpe l’horizon `[0, T]` en un certain nombre de pas de temps. Plus la grille est fine, mieux on détecte les extrêmes du sous‑jacent.\n"
-                        "- **Étape 2 – Simulation des trajectoires** : on simule, sous la mesure neutre au risque, de nombreuses trajectoires `S_t` via un GBM avec volatilité constante `σ`, en appliquant à chaque pas un choc gaussien.\n"
-                        "- **Étape 3 – Suivi de l’extrême** : pour chaque trajectoire, on met à jour à chaque pas le maximum (ou le minimum) atteint jusqu’alors. Cette valeur représente l’\"historique condensé\" de la trajectoire pour le payoff lookback.\n"
-                        "- **Étape 4 – Évaluation du payoff** : à la date finale, on calcule le payoff en fonction de cet extrême (par exemple `max(M_T - K, 0)` où `M_T = max_{0≤t≤T} S_t`), ou les variantes floating strike selon le type de contrat.\n"
-                        "- **Étape 5 – Actualisation** : on actualise le payoff obtenu sur chaque trajectoire au taux sans risque `r_common` jusqu’à la date présente.\n"
-                        "- **Étape 6 – Moyenne Monte Carlo** : le prix est obtenu en moyennant ces payoffs actualisés sur l’ensemble des trajectoires simulées.\n"
-                        "- **Étape 7 – Construction de la heatmap** : on répète l’algorithme pour toutes les combinaisons `(S0, T)` de la grille, de sorte à remplir une matrice de prix lookback Monte Carlo comparable à la surface analytique.\n"
-                        "- **Étape 8 – Analyse d’erreur** : en comparant cette surface MC à la surface exacte, on évalue la qualité de la simulation (variabilité statistique, biais de discretisation des extrêmes) et on ajuste `n_iters_lb` ou la taille des pas de temps si nécessaire."
-                    ),
-                )
-                render_inputs_explainer(
-                    "🔧 Paramètres utilisés – Lookback Monte Carlo",
-                    (
-                        "- **\"S0 (spot)\"** : centre de l’axe des spots sur lequel les trajectoires lookback sont simulées.\n"
-                        "- **\"T (maturité, années)\"** : ensemble des maturités pour lesquelles on simule les trajectoires et construit la heatmap.\n"
-                        "- **\"t (temps courant) MC\"** : temps déjà écoulé avant le début de la période de simulation, pour traiter des options en cours de vie.\n"
-                        "- **\"Taux sans risque r\"** : intervient dans le drift neutre au risque et l’actualisation des payoffs.\n"
-                        "- **\"Volatilité σ\"** : volatilité supposée constante dans les trajectoires Monte Carlo.\n"
-                        "- **\"Itérations Monte Carlo\"** : nombre de trajectoires simulées pour chaque couple `(S0, T)`."
-                    ),
-                )
-                t0_lb_mc = st.number_input(
-                    "t (temps courant) MC",
-                    value=0.0,
-                    min_value=0.0,
-                    key=_k("t0_lb_mc"),
-                    help="Temps déjà écoulé avant la période de simulation Monte Carlo (en années).",
-                )
-                n_iters_lb = st.number_input(
-                    "Itérations Monte Carlo",
-                    value=1000,
-                    min_value=100,
-                    key=_k("n_iters_lb_mc"),
-                    help="Nombre de trajectoires lookback simulées pour chaque couple (S0, T).",
-                )
-                r_lb_mc = max(r_common, 1e-6)
-                with st.expander("📈 Prix lookback Monte Carlo", expanded=False):
-                    progress = st.progress(0)
-                    try:
-                        lookback_opt_mc = lookback_call_option(
-                            T=float(T_common),
-                            t=float(t0_lb_mc),
-                            S0=float(common_spot_value),
-                            r=float(r_lb_mc),
-                            sigma=float(sigma_common),
-                        )
-                        progress.progress(40)
-                        price_lb_mc = float(lookback_opt_mc.price_monte_carlo(int(n_iters_lb)))
-                        progress.progress(80)
-                        st.success(f"Prix lookback (Monte Carlo) = {price_lb_mc:.6f}")
-                    except Exception as exc:
-                        st.error(f"Erreur lookback Monte Carlo : {exc}")
-                    finally:
-                        progress.empty()
-                st.caption(
-                    f"Paramètres utilisés pour le prix lookback MC : "
-                    f"S0={common_spot_value:.4f}, T={T_common:.4f}, r={r_lb_mc:.4f}, σ={sigma_common:.4f}, "
-                    f"t={t0_lb_mc:.4f}, N_iters={int(n_iters_lb)}"
-                )
-                if st.checkbox("Afficher la heatmap Lookback (Monte Carlo)", value=False, key=_k("show_lb_mc_heatmap")):
-                    progress = st.progress(0)
-                    with st.spinner("Calcul de la heatmap Monte Carlo"):
-                        heatmap_lb_mc = _compute_lookback_mc_heatmap(
-                            heatmap_spot_values,
-                            heatmap_maturity_values,
-                            t0_lb_mc,
-                            r_lb_mc,
-                            sigma_common,
-                            int(n_iters_lb),
-                        )
-                        progress.progress(100)
-                    st.write("Heatmap Lookback (Monte Carlo)")
-                    _render_heatmap(heatmap_lb_mc, heatmap_spot_values, heatmap_maturity_values, "Prix Lookback (MC)")
-                    progress.empty()
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(s0_path, color="crimson", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Lookback floating ({option_type_lb})")
+            st.pyplot(fig_pay, clear_figure=True)
 
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
 
-        with tab_grp_basket:
-            st.header("Options basket")
-            _render_option_text("Basket option", "basket_graph")
-            basket_run_flag = st.session_state.get(_k("run_basket_done"), False)
-            if not basket_run_flag:
-                if st.button("🚀 Lancer le module Basket", key=_k("run_basket_btn"), type="primary"):
-                    st.session_state[_k("run_basket_done")] = True
-                    basket_run_flag = True
-                    st.rerun()
-            if basket_run_flag:
-                render_general_definition_explainer(
-                    "🧺 Comprendre les options basket",
-                    (
-                        "- **Définition** : une option basket porte sur un panier de plusieurs sous‑jacents (actions, indices, etc.), typiquement via une combinaison pondérée de leurs prix.\n"
-                        "- **Mécanisme** : le payoff dépend de la valeur de ce panier (par exemple une moyenne pondérée des spots) à l’échéance ou selon une trajectoire donnée.\n"
-                        "- **Intérêt** : ces produits permettent de mutualiser le risque entre plusieurs actifs et de construire des vues relatives (sur‑/sous‑performance de certains composants du panier).\n"
-                        "- **Enjeux de modélisation** : la corrélation entre les sous‑jacents et la structure de la volatilité jouent un rôle central dans la forme de la distribution du panier.\n"
-                        "- **Objectif de cet onglet** : explorer, à travers une surface de prix et éventuellement une calibration, l’impact des paramètres de marché et des pondérations sur le prix du basket."
-                    ),
-                )
-                render_method_explainer(
-                    "🧮 Méthode utilisée dans le module Basket",
-                    (
-                        "- **Étape 1 – Chargement des historiques** : on charge les séries de prix de clôture des actifs du panier (ticker par ticker) à partir de fichiers CSV, en s’assurant d’avoir une période historique commune.\n"
-                        "- **Étape 2 – Construction du dataset** : à partir de ces séries, on construit un jeu de données où chaque ligne correspond à un scénario de marché (niveaux de prix, volatilités implicites, corrélations, strike, maturité, etc.) et à un prix d’option panier associé (label).\n"
-                        "- **Étape 3 – Séparation train / test** : le dataset est découpé selon `split_ratio` en un ensemble d’entraînement et un ensemble de test, afin de pouvoir évaluer la capacité du modèle à généraliser.\n"
-                        "- **Étape 4 – Entraînement du réseau de neurones** : un modèle `build_model_nn` est instancié avec une architecture adaptée (couches denses, activations non linéaires). On l’entraîne pendant `epochs` itérations pour minimiser une fonction de perte de type MSE entre prix prédits et prix \"théoriques\" (issus de BSM multi‑actifs ou Monte Carlo).\n"
-                        "- **Étape 5 – Suivi de l’apprentissage** : pendant l’entraînement, on suit l’évolution de la perte sur le jeu d’entraînement et de validation (MSE train / val) pour détecter surapprentissage ou sous‑apprentissage.\n"
-                        "- **Étape 6 – Construction des heatmaps de prix** : une fois le modèle entraîné, on le met en production sur une grille de paramètres (par exemple `S` et `K` autour de valeurs communes) pour produire une heatmap des prix d’option basket.\n"
-                        "- **Étape 7 – Construction de la surface de volatilité implicite** : en inversant éventuellement les prix du modèle sur un ensemble de paramètres, on peut reconstruire une surface de volatilité implicite associée au panier et la comparer aux données de marché.\n"
-                        "- **Étape 8 – Analyse des résultats** : les heatmaps et les courbes MSE permettent de juger de la qualité de l’approximation et de l’intérêt du modèle pour un pricing rapide en temps réel."
-                    ),
-                )
-                render_inputs_explainer(
-                    "🔧 Paramètres utilisés – Basket",
-                    (
-                        "- **\"S0 (spot)\"** : niveau de spot de référence utilisé pour centrer certaines grilles de prix du panier.\n"
-                        "- **\"K (strike)\"** : strike de référence du basket, autour duquel on définit les domaines de strikes.\n"
-                        "- **\"T (maturité, années)\"** : maturité de référence utilisée pour les surfaces de prix ou de volatilité.\n"
-                        "- **\"Taux sans risque r\"** : taux utilisé pour actualiser les flux dans les modèles internes.\n"
-                        "- **Sélection des actifs du panier** : zone de texte / boutons permettant de choisir les tickers qui composeront le basket.\n"
-                        "- **\"Train ratio\"** : pourcentage du dataset historique utilisé pour l’apprentissage (le reste servant au test).\n"
-                        "- **\"Epochs d'entraînement\"** : nombre de passes sur le dataset lors de l’entraînement du réseau de neurones."
-                    ),
-                )
-                ui_basket_surface(
-                    spot_common=common_spot_value,
-                    maturity_common=common_maturity_value,
-                    rate_common=common_rate_value,
-                    strike_common=common_strike_value,
-                    key_prefix=f"basket_{option_label.lower()}",
-                )
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
 
 
         with tab_asian:
-            _render_option_text("Asian (payoff terminal)", "asian_graph")
-            run_flag = st.session_state.get(_k("run_path_asian_done"), False)
-            if not run_flag:
-                if st.button("🚀 Lancer tous les pricings Asian", key=_k("run_path_asian_btn"), type="primary"):
-                    st.session_state[_k("run_path_asian_done")] = True
-                    st.rerun()
-            else:
-                ui_asian_options(
-                    spot_default=common_spot_value,
-                    sigma_common=common_sigma_value,
-                    maturity_common=common_maturity_value,
-                    strike_common=common_strike_value,
-                    rate_common=common_rate_value,
-                    key_prefix=_k("asian"),
-                    option_char=option_char,
+            st.subheader("Asian arithmétique – vue Notebook")
+            avg_close = float(spy_close_path.mean()) if spy_close_path is not None else s0_path
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_as = st.selectbox("Type", ["call", "put"], key=_k("asian_type"))
+                strike_as = st.slider(
+                    "Strike",
+                    min_value=0.6 * s0_path,
+                    max_value=1.4 * s0_path,
+                    value=s0_path,
+                    step=0.5,
+                    key=_k("asian_k"),
                 )
+                avg_as = st.slider(
+                    "Moyenne (ref)",
+                    min_value=0.5 * s0_path,
+                    max_value=1.5 * s0_path,
+                    value=avg_close,
+                    step=0.5,
+                    key=_k("asian_avg"),
+                )
+            with col2:
+                sigma_as = st.slider("Sigma", min_value=0.01, max_value=1.0, value=common_sigma_value, step=0.01, key=_k("asian_sigma"))
+                r_as = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("asian_r"))
+                T_as = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("asian_T"))
+
+            view_dyn = view_asian_arith(
+                s0_path,
+                strike_as,
+                avg_as,
+                option_type=option_type_as,
+                r=r_as,
+                q=0.0,
+                sigma=sigma_as,
+                T=T_as,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_path, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(avg_as, color="purple", linestyle=":", label=f"Moyenne = {avg_as:.2f}")
+            ax_ts.axhline(strike_as, color="gray", linestyle="--", label=f"K = {strike_as:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Asian arith)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(strike_as, color="gray", linestyle="--", label=f"K = {strike_as:.2f}")
+            ax_pay.axvline(s0_path, color="crimson", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Asian arithmétique ({option_type_as})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
 
         with tab_iron_condor:
             k_center = st.slider(
@@ -5868,9 +5792,9 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
         with tab_forward_start:
             spot_start = st.slider(
                 "Spot de départ (S_start)",
-                min_value=0.5 * float(common_spot_value),
-                max_value=1.5 * float(common_spot_value),
-                value=float(common_spot_value),
+                min_value=0.5 * float(s0_path),
+                max_value=1.5 * float(s0_path),
+                value=float(s0_path),
                 step=0.5,
                 key=_k("forward_start_s_start"),
             )
@@ -5883,8 +5807,18 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("forward_start_m"),
             )
             opt_type = "call" if option_char.lower() == "c" else "put"
+            strike_forward = m_factor * spot_start
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(spot_start, color="gray", linestyle="--", label=f"S_start = {spot_start:.2f}")
+            ax_ts.axhline(strike_forward, color="firebrick", linestyle=":", label=f"K = m*S_start = {strike_forward:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Forward-start)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
             view_dyn = view_forward_start(
-                float(common_spot_value),
+                s0_path,
                 spot_start,
                 m=m_factor,
                 r=float(common_rate_value),
@@ -5901,7 +5835,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             fig, ax = plt.subplots(figsize=(7, 4))
             ax.plot(s_grid, payoff_grid, label="Payoff brut")
             ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
-            ax.axvline(float(common_spot_value), color="crimson", linestyle="-.", label=f"S_0 = {float(common_spot_value):.2f}")
+            ax.axvline(float(s0_path), color="crimson", linestyle="-.", label=f"S_0 = {float(s0_path):.2f}")
             ax.axhline(0, color="black", linewidth=0.8)
             ax.set_xlabel("Spot")
             ax.set_ylabel("Payoff / P&L")
@@ -7075,34 +7009,202 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
 
         with tab_asian_geo:
-            _render_option_text("Asian géométrique (payoff terminal)", "asian_geo_graph")
-            run_flag = st.session_state.get(_k("run_path_asian_geo_done"), False)
-            if not run_flag:
-                if st.button("🚀 Lancer tous les pricings Asian géométrique", key=_k("run_path_asian_geo_btn"), type="primary"):
-                    st.session_state[_k("run_path_asian_geo_done")] = True
-                    st.rerun()
-            else:
-                _render_structure_panel("Asian géométrique")
+            st.subheader("Asian géométrique – vue Notebook")
+            avg_close = float(spy_close_path.mean()) if spy_close_path is not None else s0_path
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_ag = st.selectbox("Type", ["call", "put"], key=_k("asian_geo_type"))
+                strike_ag = st.slider(
+                    "Strike",
+                    min_value=0.6 * s0_path,
+                    max_value=1.4 * s0_path,
+                    value=s0_path,
+                    step=0.5,
+                    key=_k("asian_geo_k"),
+                )
+                avg_ag = st.slider(
+                    "Moyenne (ref)",
+                    min_value=0.5 * s0_path,
+                    max_value=1.5 * s0_path,
+                    value=avg_close,
+                    step=0.5,
+                    key=_k("asian_geo_avg"),
+                )
+            with col2:
+                sigma_ag = st.slider("Sigma", min_value=0.01, max_value=1.0, value=common_sigma_value, step=0.01, key=_k("asian_geo_sigma"))
+                r_ag = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("asian_geo_r"))
+                T_ag = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("asian_geo_T"))
+
+            view_dyn = view_asian_geom(
+                s0_path,
+                strike_ag,
+                avg_ag,
+                option_type=option_type_ag,
+                r=r_ag,
+                q=0.0,
+                sigma=sigma_ag,
+                T=T_ag,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_path, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(avg_ag, color="purple", linestyle=":", label=f"Moyenne = {avg_ag:.2f}")
+            ax_ts.axhline(strike_ag, color="gray", linestyle="--", label=f"K = {strike_ag:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Asian géo)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(strike_ag, color="gray", linestyle="--", label=f"K = {strike_ag:.2f}")
+            ax_pay.axvline(s0_path, color="crimson", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Asian géométrique ({option_type_ag})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
+
 
         with tab_lookback_fixed:
-            _render_option_text("Lookback fixed (approx payoff)", "lookback_fixed_graph")
-            run_flag = st.session_state.get(_k("run_path_lookback_fixed_done"), False)
-            if not run_flag:
-                if st.button("🚀 Lancer tous les pricings Lookback fixed", key=_k("run_path_lookback_fixed_btn"), type="primary"):
-                    st.session_state[_k("run_path_lookback_fixed_done")] = True
-                    st.rerun()
-            else:
-                _render_structure_panel("Lookback fixed (MC)")
+            st.subheader("Lookback fixed – vue Notebook")
+            col1, col2 = st.columns(2)
+            with col1:
+                option_type_lbf = st.selectbox("Type", ["call", "put"], key=_k("lbf_type"))
+                min_lbf = st.slider(
+                    "Min path",
+                    min_value=0.5 * s0_path,
+                    max_value=1.0 * s0_path,
+                    value=0.9 * s0_path,
+                    step=0.5,
+                    key=_k("lbf_min"),
+                )
+                max_lbf = st.slider(
+                    "Max path",
+                    min_value=1.0 * s0_path,
+                    max_value=1.6 * s0_path,
+                    value=1.1 * s0_path,
+                    step=0.5,
+                    key=_k("lbf_max"),
+                )
+            with col2:
+                strike_lbf = st.slider(
+                    "Strike",
+                    min_value=0.6 * s0_path,
+                    max_value=1.5 * s0_path,
+                    value=s0_path,
+                    step=0.5,
+                    key=_k("lbf_k"),
+                )
+                span_lbf = st.slider("Span payoff (%)", min_value=0.1, max_value=1.0, value=0.5, step=0.05, key=_k("lbf_span"))
+
+            view_dyn = view_lookback_fixed(
+                s0_path,
+                min_lbf,
+                max_lbf,
+                strike_lbf,
+                option_type=option_type_lbf,
+                span=span_lbf,
+            )
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_path, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(min_lbf, color="teal", linestyle=":", label=f"Min = {min_lbf:.2f}")
+            ax_ts.axhline(max_lbf, color="gray", linestyle="--", label=f"Max = {max_lbf:.2f}")
+            ax_ts.axhline(strike_lbf, color="firebrick", linestyle="-.", label=f"K = {strike_lbf:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Lookback fixed)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(s0_path, color="crimson", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title(f"Lookback fixed ({option_type_lbf})")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
+
 
         with tab_cliquet:
-            _render_option_text("Cliquet / Ratchet (approx payoff)", "cliquet_graph")
-            run_flag = st.session_state.get(_k("run_path_cliquet_done"), False)
-            if not run_flag:
-                if st.button("🚀 Lancer tous les pricings Cliquet / Ratchet", key=_k("run_path_cliquet_btn"), type="primary"):
-                    st.session_state[_k("run_path_cliquet_done")] = True
-                    st.rerun()
-            else:
-                _render_structure_panel("Cliquet / Ratchet (MC)")
+            st.subheader("Cliquet / Ratchet – vue Notebook")
+            floor_val = st.slider("Floor", min_value=-0.5, max_value=0.5, value=0.0, step=0.01, key=_k("cliquet_floor"))
+            cap_val = st.slider("Cap", min_value=0.0, max_value=0.5, value=0.1, step=0.01, key=_k("cliquet_cap"))
+
+            view_dyn = view_cliquet(s0_path, floor=floor_val, cap=cap_val)
+            premium = float(view_dyn.get("premium", 0.0))
+            s_grid = view_dyn["s_grid"]
+            payoff_grid = view_dyn["payoff"]
+            pnl_grid = view_dyn["pnl"]
+            payoff_s0 = float(np.interp(s0_path, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium
+
+            fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.axhline(s0_path, color="gray", linestyle="--", label=f"S0 = {s0_path:.2f}")
+            ax_ts.set_ylabel("Prix")
+            ax_ts.set_title("Clôtures SPY (Cliquet)")
+            ax_ts.legend(loc="best")
+            fig_ts.autofmt_xdate()
+            st.pyplot(fig_ts, clear_figure=True)
+
+            fig_pay, ax_pay = plt.subplots(figsize=(7, 4))
+            ax_pay.plot(s_grid, payoff_grid, label="Payoff cliquet")
+            ax_pay.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax_pay.axvline(s0_path, color="crimson", linestyle="-.", label=f"S0 = {s0_path:.2f}")
+            ax_pay.axhline(0, color="black", linewidth=0.8)
+            ax_pay.legend(loc="best")
+            ax_pay.set_xlabel("Spot")
+            ax_pay.set_ylabel("Payoff / P&L")
+            ax_pay.set_title("Cliquet / Ratchet (approx)")
+            st.pyplot(fig_pay, clear_figure=True)
+
+            st.markdown(
+                f"""
+**Prime ~ {premium:.4f}**
+
+- Payoff @ S0 = {payoff_s0:.4f}
+- P&L net = {pnl_s0:.4f}
+"""
+            )
+
 
         with tab_quanto:
             strike = st.slider(
