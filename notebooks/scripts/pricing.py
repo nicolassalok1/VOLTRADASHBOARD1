@@ -1,9 +1,11 @@
 import math
+import sys
 from pathlib import Path
 from typing import Iterable, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 
 DEFAULT_R = 0.02
 DEFAULT_Q = 0.0
@@ -13,6 +15,13 @@ DEFAULT_T = 1.0
 # Anchor cache to the notebooks/ directory to avoid scattering files when running from subfolders
 _CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "closing_cache.csv"
 _LEGACY_CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "_cache_spy_close.csv"
+_HES_DIR = Path(__file__).resolve().parents[2] / "scripts" / "scriptsGPT" / "pricing_scripts"
+
+# Ensure Heston torch pricer is importable
+if str(_HES_DIR) not in sys.path:
+    sys.path.insert(0, str(_HES_DIR))
+
+from Heston.heston_torch import HestonParams, carr_madan_call_torch  # noqa: E402
 
 
 def _migrate_legacy_spy_cache() -> None:
@@ -76,6 +85,47 @@ def last_spy_close(period: str = "1y", interval: str = "1d") -> float:
     _migrate_legacy_spy_cache()
     close = fetch_spy_history(period=period, interval=interval)
     return float(close.iloc[-1])
+
+
+def price_heston_carr_madan(
+    S0: float,
+    K: float,
+    T: float,
+    r: float,
+    q: float,
+    kappa: float,
+    theta: float,
+    sigma: float,
+    rho: float,
+    v0: float,
+    option_type: str = "call",
+) -> float:
+    """
+    Price a European option under Heston using Carr–Madan FFT pricer.
+
+    Args:
+        S0: Spot price.
+        K: Strike.
+        T: Maturity (years).
+        r: Risk-free rate.
+        q: Continuous dividend (or repo).
+        kappa, theta, sigma, rho, v0: Heston parameters.
+        option_type: "call"/"c" or "put"/"p".
+
+    Returns:
+        Option price (float).
+    """
+    params = HestonParams(
+        torch.tensor(float(kappa)),
+        torch.tensor(float(theta)),
+        torch.tensor(float(sigma)),
+        torch.tensor(float(rho)),
+        torch.tensor(float(v0)),
+    )
+    call_price = float(carr_madan_call_torch(float(S0), float(r), float(q), float(T), params, float(K)))
+    if option_type.lower().startswith("c"):
+        return call_price
+    return float(call_price - float(S0) * math.exp(-float(q) * float(T)) + float(K) * math.exp(-float(r) * float(T)))
 
 
 def payoff_call(spot, strike: float):

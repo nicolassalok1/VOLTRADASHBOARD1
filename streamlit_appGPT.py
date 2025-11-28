@@ -109,6 +109,7 @@ from pricing import (
     view_rainbow,
     view_straddle,
     view_strangle,
+    price_heston_carr_madan,
 )
 DATA_FILE = JSON_DIR / "equities.json"
 PORTFOLIO_FILE = JSON_DIR / "portfolio.json"
@@ -4833,19 +4834,24 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
             opt_type_h = "call" if option_char == "c" else "put"
             price_heston_display: float | None = None
-            try:
-                price_heston_display = _carr_madan_price(
-                    S0=float(S0_h),
-                    K=float(K_slider_h),
-                    T=float(T_slider_h),
-                    r=float(r_h),
-                    q=float(d_h),
-                    opt_char=option_char,
-                    params=params_heston,
-                )
-                st.session_state["eu_price_heston"] = price_heston_display
-            except Exception as exc:
-                st.error(f"Erreur Heston (Carr–Madan) : {exc}")
+            if st.session_state.get("carr_madan_calibrated", False):
+                try:
+                    price_heston_display = price_heston_carr_madan(
+                        S0=float(S0_h),
+                        K=float(K_slider_h),
+                        T=float(T_slider_h),
+                        r=float(r_h),
+                        q=float(d_h),
+                        kappa=float(st.session_state.get("heston_kappa_common", 0.0)),
+                        theta=float(st.session_state.get("heston_theta_common", 0.0)),
+                        sigma=float(st.session_state.get("heston_eta_common", 0.0)),
+                        rho=float(st.session_state.get("heston_rho_common", 0.0)),
+                        v0=float(st.session_state.get("heston_v0_common", 0.0)),
+                        option_type=opt_type_h,
+                    )
+                    st.session_state["eu_price_heston"] = price_heston_display
+                except Exception as exc:
+                    st.error(f"Erreur Heston (Carr–Madan) : {exc}")
 
             premium_h = price_heston_display
             s_grid = np.linspace(max(0.1, K_slider_h * 0.4), K_slider_h * 1.6, 200)
@@ -5056,17 +5062,21 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             )
             st.caption("Pricing direct avec Carr–Madan (Heston calibré).")
             price_cm = price_heston_display
-            if price_cm is None:
+            if price_cm is None and st.session_state.get("carr_madan_calibrated", False):
                 try:
                     with st.spinner("Calcul Heston Carr–Madan..."):
-                        price_cm = _carr_madan_price(
+                        price_cm = price_heston_carr_madan(
                             S0=float(common_spot_value),
                             K=float(common_strike_value),
                             T=float(common_maturity_value),
                             r=float(common_rate_value),
                             q=float(d_common),
-                            opt_char=option_char,
-                            params=params_heston,
+                            kappa=float(st.session_state.get("heston_kappa_common", 0.0)),
+                            theta=float(st.session_state.get("heston_theta_common", 0.0)),
+                            sigma=float(st.session_state.get("heston_eta_common", 0.0)),
+                            rho=float(st.session_state.get("heston_rho_common", 0.0)),
+                            v0=float(st.session_state.get("heston_v0_common", 0.0)),
+                            option_type=option_char,
                         )
                     st.session_state["eu_price_heston"] = price_cm
                 except Exception as exc:
