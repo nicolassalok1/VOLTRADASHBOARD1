@@ -6416,13 +6416,20 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=0.5,
                 key=_k("chooser_k"),
             )
+            T_chooser = st.slider("T (années)", min_value=0.05, max_value=2.0, value=float(common_maturity_value), step=0.05, key=_k("chooser_T"))
+            iv_chooser = _get_cached_iv_for(strike, T_chooser, "call" if opt_char_chooser == "c" else "put")
+            sigma_chooser = float(iv_chooser) if iv_chooser is not None and np.isfinite(iv_chooser) and iv_chooser > 0 else float(common_sigma_value)
+            if iv_chooser is not None and np.isfinite(iv_chooser) and iv_chooser > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_chooser:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
             view_dyn = view_chooser(
                 float(common_spot_value),
                 strike,
                 r=float(common_rate_value),
                 q=float(d_common),
-                sigma=float(common_sigma_value),
-                T=float(common_maturity_value),
+                sigma=float(sigma_chooser),
+                T=float(T_chooser),
             )
             premium = float(view_dyn.get("premium", 0.0))
             s_grid = view_dyn["s_grid"]
@@ -6455,11 +6462,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             ).strip().upper()
             st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
             today = datetime.date.today()
-            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            expiration_dt = today + datetime.timedelta(days=int((T_chooser or 0.0) * 365))
             qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("chooser_qty_inline"))
             side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("chooser_side_inline"))
             st.caption(f"K: {strike:.4f}")
-            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+            st.caption(f"T (maturité, années): {float(T_chooser):.4f}")
 
             if st.button("Ajouter au dashboard", key=_k("chooser_add_inline")):
                 payload = {
@@ -6473,7 +6480,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "avg_price": price,
                     "side": side,
                     "S0": float(common_spot_value),
-                    "maturity_years": common_maturity_value,
+                    "maturity_years": float(T_chooser),
                     "legs": [
                         {"option_type": "chooser", "strike": float(strike)},
                     ],
@@ -6483,6 +6490,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "structure": "Chooser",
                         "strike": float(strike),
                         "spot_at_pricing": float(common_spot_value),
+                        "sigma_used": float(sigma_chooser),
+                        "r": float(common_rate_value),
+                        "q": float(d_common),
+                        "maturity": float(T_chooser),
                     },
                 }
                 try:
@@ -8173,14 +8184,21 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("quanto_fx"),
             )
             opt_type = "call" if option_char.lower() == "c" else "put"
+            T_quanto = st.slider("T (années)", min_value=0.05, max_value=2.0, value=float(common_maturity_value), step=0.05, key=_k("quanto_T"))
+            iv_quanto = _get_cached_iv_for(strike, T_quanto, opt_type)
+            sigma_quanto = float(iv_quanto) if iv_quanto is not None and np.isfinite(iv_quanto) and iv_quanto > 0 else float(common_sigma_value)
+            if iv_quanto is not None and np.isfinite(iv_quanto) and iv_quanto > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_quanto:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
             view_dyn = view_quanto(
                 float(common_spot_value),
                 strike,
                 fx_rate=fx_rate,
                 r=float(common_rate_value),
                 q=float(d_common),
-                sigma=float(common_sigma_value),
-                T=float(common_maturity_value),
+                sigma=float(sigma_quanto),
+                T=float(T_quanto),
                 option_type=opt_type,
             )
             premium = float(view_dyn.get("premium", 0.0))
@@ -8214,11 +8232,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             ).strip().upper()
             st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
             today = datetime.date.today()
-            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            expiration_dt = today + datetime.timedelta(days=int((T_quanto or 0.0) * 365))
             qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("quanto_qty_inline"))
             side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("quanto_side_inline"))
             st.caption(f"K: {strike:.4f} | FX: {fx_rate:.4f}")
-            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+            st.caption(f"T (maturité, années): {float(T_quanto):.4f}")
 
             if st.button("Ajouter au dashboard", key=_k("quanto_add_inline")):
                 payload = {
@@ -8232,7 +8250,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "avg_price": price,
                     "side": side,
                     "S0": float(common_spot_value),
-                    "maturity_years": common_maturity_value,
+                    "maturity_years": float(T_quanto),
                     "legs": [
                         {"option_type": opt_char_rain, "strike": float(strike), "fx_rate": float(fx_rate), "quanto": True},
                     ],
@@ -8243,6 +8261,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "strike": float(strike),
                         "fx_rate": float(fx_rate),
                         "spot_at_pricing": float(common_spot_value),
+                        "sigma_used": float(sigma_quanto),
+                        "r": float(common_rate_value),
+                        "q": float(d_common),
+                        "maturity": float(T_quanto),
                     },
                 }
                 try:
@@ -8296,14 +8318,21 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("rainbow_s0b"),
             )
             opt_type = "call" if option_char.lower() == "c" else "put"
+            T_rainbow = st.slider("T (années)", min_value=0.05, max_value=2.0, value=float(common_maturity_value), step=0.05, key=_k("rainbow_T"))
+            iv_rain = _get_cached_iv_for(strike, T_rainbow, opt_type)
+            sigma_rain = float(iv_rain) if iv_rain is not None and np.isfinite(iv_rain) and iv_rain > 0 else float(common_sigma_value)
+            if iv_rain is not None and np.isfinite(iv_rain) and iv_rain > 0:
+                st.caption(f"IV récupérée (cache) ≈ {iv_rain:.4f}")
+            else:
+                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
             view_dyn = view_rainbow(
                 float(common_spot_value),
                 float(spot_b),
                 strike,
                 r=float(common_rate_value),
                 q=float(d_common),
-                sigma=float(common_sigma_value),
-                T=float(common_maturity_value),
+                sigma=float(sigma_rain),
+                T=float(T_rainbow),
                 option_type=opt_type,
             )
             premium = float(view_dyn.get("premium", 0.0))
@@ -8340,11 +8369,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 f"Sous-jacent B: {(st.session_state.get(_k('rainbow_ticker_b'), 'N/A') or 'N/A').upper()} | Spot: {spot_b:.4f}"
             )
             today = datetime.date.today()
-            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            expiration_dt = today + datetime.timedelta(days=int((T_rainbow or 0.0) * 365))
             qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("rainbow_qty_inline"))
             side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("rainbow_side_inline"))
             st.caption(f"K: {strike:.4f}")
-            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+            st.caption(f"T (maturité, années): {float(T_rainbow):.4f}")
 
             if st.button("Ajouter au dashboard", key=_k("rainbow_add_inline")):
                 payload = {
@@ -8358,7 +8387,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "avg_price": price,
                     "side": side,
                     "S0": float(common_spot_value),
-                    "maturity_years": common_maturity_value,
+                    "maturity_years": float(T_rainbow),
                     "legs": [
                         {"option_type": opt_char_rain, "strike": float(strike), "secondary_spot": float(spot_b), "rainbow": True},
                     ],
@@ -8369,6 +8398,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "strike": float(strike),
                         "secondary_spot": float(spot_b),
                         "spot_at_pricing": float(common_spot_value),
+                        "sigma_used": float(sigma_rain),
+                        "r": float(common_rate_value),
+                        "q": float(d_common),
+                        "maturity": float(T_rainbow),
                     },
                 }
                 try:
