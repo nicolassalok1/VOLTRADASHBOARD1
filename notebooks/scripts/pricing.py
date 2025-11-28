@@ -12,6 +12,20 @@ DEFAULT_T = 1.0
 
 # Anchor cache to the notebooks/ directory to avoid scattering files when running from subfolders
 _CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "closing_cache.csv"
+_LEGACY_CACHE_SPY_CLOSE = Path(__file__).resolve().parent.parent / "GPT" / "_cache_spy_close.csv"
+
+
+def _migrate_legacy_spy_cache() -> None:
+    """
+    If an old cache file name is present, migrate it to the new closing_cache.csv.
+    Keeps the latest cache available under the unified name.
+    """
+    try:
+        if _LEGACY_CACHE_SPY_CLOSE.exists():
+            _CACHE_SPY_CLOSE.parent.mkdir(parents=True, exist_ok=True)
+            _LEGACY_CACHE_SPY_CLOSE.replace(_CACHE_SPY_CLOSE)
+    except Exception:
+        pass
 
 
 def _norm_cdf(x: float) -> float:
@@ -36,6 +50,7 @@ def bs_price_put(S: float, K: float, r: float = DEFAULT_R, q: float = DEFAULT_Q,
 
 def fetch_spy_history(period: str = "1y", interval: str = "1d", cache_path: Path = _CACHE_SPY_CLOSE) -> pd.Series:
     """Fetch SPY close prices with a simple CSV cache under notebooks/GPT/."""
+    _migrate_legacy_spy_cache()
     try:
         if cache_path.exists():
             cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
@@ -58,6 +73,7 @@ def fetch_spy_history(period: str = "1y", interval: str = "1d", cache_path: Path
 
 
 def last_spy_close(period: str = "1y", interval: str = "1d") -> float:
+    _migrate_legacy_spy_cache()
     close = fetch_spy_history(period=period, interval=interval)
     return float(close.iloc[-1])
 
