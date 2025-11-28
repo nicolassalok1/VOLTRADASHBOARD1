@@ -56,6 +56,7 @@ import math
 import yfinance as yf
 import re
 import inspect
+import threading
 
 # Configuration
 APP_DIR = Path(__file__).resolve().parent
@@ -5048,7 +5049,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                             st.session_state["heston_calibrating"] = False
 
                     threading.Thread(target=_run_heston_calib_async, args=(calib_slice.copy(),), daemon=True).start()
-                    st.experimental_rerun()
+                    st.rerun()
 
             render_inputs_explainer(
                 "🔧 Paramètres utilisés – Heston européen",
@@ -5134,6 +5135,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                                     y=t_vals,
                                     z=iv_masked,
                                     colorscale="Viridis",
+                                    showscale=True,
                                 )
                             ]
                         )
@@ -5142,9 +5144,15 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                                 xaxis_title="Strike K",
                                 yaxis_title="Maturité T",
                                 zaxis_title="IV",
+                                camera=dict(eye=dict(x=1.5, y=1.5, z=0.8)),
+                                xaxis=dict(fixedrange=True),
+                                yaxis=dict(fixedrange=True),
+                                zaxis=dict(fixedrange=True),
                             ),
                             height=500,
                             margin=dict(l=0, r=0, b=0, t=0),
+                            dragmode=False,
+                            hovermode=False,
                         )
                         st.plotly_chart(fig_iv, use_container_width=True, key=_k("heston_iv_surface"))
                     except Exception as _surf_exc:
