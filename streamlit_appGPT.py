@@ -3131,7 +3131,7 @@ def run_app_options():
 
 
         _, cached_hist = load_cached_option_history()
-        default_tkr = st.session_state.get("tkr_common", "SPY")
+        default_tkr = st.session_state.get("tkr_common") or get_last_cached_option_ticker() or "SPY"
         # Ticker input with refresh button beside it
         ticker = st.text_input(
             "Ticker (sous-jacent)",
@@ -5156,58 +5156,57 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             int_n_tree = int(n_tree_am)
             if int_n_tree > 10:
                 st.info("L'affichage peut devenir difficile à lire pour un nombre de pas supérieur à 10.")
-            with st.expander(f"📈 Pricing CRR ({cpflag_am}) + heatmap", expanded=False):
-                with st.spinner("Calcul du prix CRR"):
-                    try:
-                        option_am_single = Option(
-                            s0=S0_common,
-                            T=T_common,
-                            K=K_common,
-                            call=(cpflag_am == 'Call'),
-                        )
-                        price_crr_single = crr_pricing(
-                            r=r_common,
-                            sigma=sigma_common,
-                            option=option_am_single,
-                            n=int_n_tree,
-                        )
-                        st.success(f"Prix américain CRR ({cpflag_am}) ≈ {price_crr_single:.6f} (avec {int_n_tree} pas)")
-                        render_add_to_dashboard_button(
-                            product_label="American (CRR)",
-                            option_char=option_char,
-                            price_value=price_crr_single,
-                            strike=K_common,
-                            maturity=T_common,
-                            key_prefix=_k("save_am_crr"),
-                            spot=S0_common,
-                        )
-                    except Exception as exc:
-                        st.error(f"Erreur CRR : {exc}")
-                with st.spinner("Construction de l'arbre CRR"):
-                    spot_tree, value_tree = _build_crr_tree(
-                        option=option_am_crr, r=r_common, sigma=sigma_common, n_steps=int_n_tree
+            with st.spinner("Calcul du prix CRR"):
+                try:
+                    option_am_single = Option(
+                        s0=S0_common,
+                        T=T_common,
+                        K=K_common,
+                        call=(cpflag_am == 'Call'),
                     )
-                st.write("**Représentation graphique**")
-                fig_tree = _plot_crr_tree(spot_tree, value_tree)
-                st.pyplot(fig_tree)
-                plt.close(fig_tree)
+                    price_crr_single = crr_pricing(
+                        r=r_common,
+                        sigma=sigma_common,
+                        option=option_am_single,
+                        n=int_n_tree,
+                    )
+                    st.success(f"Prix américain CRR ({cpflag_am}) ≈ {price_crr_single:.6f} (avec {int_n_tree} pas)")
+                    render_add_to_dashboard_button(
+                        product_label="American (CRR)",
+                        option_char=option_char,
+                        price_value=price_crr_single,
+                        strike=K_common,
+                        maturity=T_common,
+                        key_prefix=_k("save_am_crr"),
+                        spot=S0_common,
+                    )
+                except Exception as exc:
+                    st.error(f"Erreur CRR : {exc}")
+            with st.spinner("Construction de l'arbre CRR"):
+                spot_tree, value_tree = _build_crr_tree(
+                    option=option_am_crr, r=r_common, sigma=sigma_common, n_steps=int_n_tree
+                )
+            st.write("**Représentation graphique**")
+            fig_tree = _plot_crr_tree(spot_tree, value_tree)
+            st.pyplot(fig_tree)
+            plt.close(fig_tree)
 
-                with st.spinner("Calcul de la heatmap CRR"):
-                    call_heatmap_crr, put_heatmap_crr = _compute_american_crr_heatmaps(
-                        heatmap_spot_values,
-                        heatmap_strike_values,
-                        T_common,
-                        r_common,
-                        sigma_common,
-                        int_n_tree,
-                    )
-                _render_heatmaps_for_current_option(
-                    "CRR",
-                    call_heatmap_crr,
-                    put_heatmap_crr,
+            with st.spinner("Calcul de la heatmap CRR"):
+                call_heatmap_crr, put_heatmap_crr = _compute_american_crr_heatmaps(
                     heatmap_spot_values,
                     heatmap_strike_values,
+                    T_common,
+                    r_common,
+                    sigma_common,
+                    int_n_tree,
                 )
+            _render_heatmaps_for_current_option(
+                "CRR",
+                call_heatmap_crr,
+                put_heatmap_crr,
+                heatmap_spot_values,
+                heatmap_strike_values,
+            )
             st.caption(
                 f"Paramètres utilisés pour CRR : "
                 f"S0={S0_common:.4f}, K={K_common:.4f}, T={T_common:.4f}, "
@@ -5217,13 +5216,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
         with tab_bermudan:
             st.header("Option bermudéenne")
             _render_option_text("Option bermudéenne", "bermuda_payoff")
-
-            with st.expander("📊 Graph payoff (bermudan)", expanded=False):
-                xs = np.linspace(max(0.1, K_common * 0.5), K_common * 1.5, 120)
-                ys = [max(x - K_common, 0.0) if option_char == "c" else max(K_common - x, 0.0) for x in xs]
-                fig_pay = _payoff_plot(xs, ys, f"Payoff Bermudan ({option_label})", strike_lines=[K_common])
-                st.plotly_chart(fig_pay, width="stretch")
-                st.caption("Payoff vanilla avec exercice possible sur un nombre fini de dates.")
 
             st.subheader("Longstaff–Schwartz (GBM)")
             render_method_explainer(
@@ -5266,42 +5258,41 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     key=_k("bmd_degree"),
                 )
 
-            with st.expander(f"📈 Pricing Bermudan L-S ({option_label})", expanded=False):
-                with st.spinner("Calcul Bermudan LSMC..."):
-                    try:
-                        price_bmd_mc = price_bermudan_lsmc(
-                            S0=S0_common,
-                            K=K_common,
-                            T=T_common,
-                            r=r_common,
-                            q=d_common,
-                            sigma=sigma_common,
-                            cpflag=option_char,
-                            M=int(n_steps_bmd),
-                            N_paths=int(n_paths_bmd),
-                            degree=int(degree_bmd),
-                            n_ex_dates=int(n_ex_dates_bmd),
-                            seed=12345,
-                        )
-                        st.success(f"Prix Bermudan L-S ({option_label}) = {price_bmd_mc:.6f}")
-                        render_add_to_dashboard_button(
-                            product_label="Bermudan (LSMC)",
-                            option_char=option_char,
-                            price_value=price_bmd_mc,
-                            strike=K_common,
-                            maturity=T_common,
-                            key_prefix=_k("save_bmd_lsmc"),
-                            spot=S0_common,
-                            misc={
-                                "method": "lsmc_gbm",
-                                "n_paths": int(n_paths_bmd),
-                                "n_steps": int(n_steps_bmd),
-                                "n_ex_dates": int(n_ex_dates_bmd),
-                                "degree": int(degree_bmd),
-                            },
-                        )
-                    except Exception as exc:
-                        st.error(f"Erreur Bermudan LSMC : {exc}")
+            with st.spinner("Calcul Bermudan LSMC..."):
+                try:
+                    price_bmd_mc = price_bermudan_lsmc(
+                        S0=S0_common,
+                        K=K_common,
+                        T=T_common,
+                        r=r_common,
+                        q=d_common,
+                        sigma=sigma_common,
+                        cpflag=option_char,
+                        M=int(n_steps_bmd),
+                        N_paths=int(n_paths_bmd),
+                        degree=int(degree_bmd),
+                        n_ex_dates=int(n_ex_dates_bmd),
+                        seed=12345,
+                    )
+                    st.success(f"Prix Bermudan L-S ({option_label}) = {price_bmd_mc:.6f}")
+                    render_add_to_dashboard_button(
+                        product_label="Bermudan (LSMC)",
+                        option_char=option_char,
+                        price_value=price_bmd_mc,
+                        strike=K_common,
+                        maturity=T_common,
+                        key_prefix=_k("save_bmd_lsmc"),
+                        spot=S0_common,
+                        misc={
+                            "method": "lsmc_gbm",
+                            "n_paths": int(n_paths_bmd),
+                            "n_steps": int(n_steps_bmd),
+                            "n_ex_dates": int(n_ex_dates_bmd),
+                            "degree": int(degree_bmd),
+                        },
+                    )
+                except Exception as exc:
+                    st.error(f"Erreur Bermudan LSMC : {exc}")
             st.divider()
 
             st.subheader("Crank–Nicolson (PDE)")
@@ -5348,46 +5339,45 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 )
                 exercise_step_bmd = None if exercise_step_bmd <= 0 else int(exercise_step_bmd)
 
-            with st.expander(f"📈 Pricing Bermudan PDE ({option_label})", expanded=False):
-                try:
-                    cn_kwargs = {
-                        "Typeflag": "Bmd",
-                        "cpflag": option_char,
-                        "S0": S0_common,
-                        "K": K_common,
-                        "T": T_common,
-                        "vol": sigma_common,
-                        "r": r_common,
-                        "d": d_common,
+            try:
+                cn_kwargs = {
+                    "Typeflag": "Bmd",
+                    "cpflag": option_char,
+                    "S0": S0_common,
+                    "K": K_common,
+                    "T": T_common,
+                    "vol": sigma_common,
+                    "r": r_common,
+                    "d": d_common,
+                    "n_spatial": int(n_spatial_bmd),
+                    "n_time": int(n_time_bmd),
+                }
+                if exercise_step_bmd is not None:
+                    cn_kwargs["exercise_step"] = exercise_step_bmd
+                else:
+                    cn_kwargs["n_exercise_dates"] = int(n_ex_dates_cn)
+                solver_bmd = CrankNicolsonBS(**cn_kwargs)
+                price_bmd_cn, delta_bmd, gamma_bmd, theta_bmd = solver_bmd.CN_option_info()
+                st.success(f"Prix Bermudan PDE ({option_label}) = {price_bmd_cn:.6f}")
+                st.caption(f"Δ={delta_bmd:.4f} | Γ={gamma_bmd:.4f} | Θ={theta_bmd:.4f}")
+                render_add_to_dashboard_button(
+                    product_label="Bermudan (PDE)",
+                    option_char=option_char,
+                    price_value=price_bmd_cn,
+                    strike=K_common,
+                    maturity=T_common,
+                    key_prefix=_k("save_bmd_cn"),
+                    spot=S0_common,
+                    misc={
+                        "method": "crank_nicolson",
                         "n_spatial": int(n_spatial_bmd),
                         "n_time": int(n_time_bmd),
-                    }
-                    if exercise_step_bmd is not None:
-                        cn_kwargs["exercise_step"] = exercise_step_bmd
-                    else:
-                        cn_kwargs["n_exercise_dates"] = int(n_ex_dates_cn)
-                    solver_bmd = CrankNicolsonBS(**cn_kwargs)
-                    price_bmd_cn, delta_bmd, gamma_bmd, theta_bmd = solver_bmd.CN_option_info()
-                    st.success(f"Prix Bermudan PDE ({option_label}) = {price_bmd_cn:.6f}")
-                    st.caption(f"Δ={delta_bmd:.4f} | Γ={gamma_bmd:.4f} | Θ={theta_bmd:.4f}")
-                    render_add_to_dashboard_button(
-                        product_label="Bermudan (PDE)",
-                        option_char=option_char,
-                        price_value=price_bmd_cn,
-                        strike=K_common,
-                        maturity=T_common,
-                        key_prefix=_k("save_bmd_cn"),
-                        spot=S0_common,
-                        misc={
-                            "method": "crank_nicolson",
-                            "n_spatial": int(n_spatial_bmd),
-                            "n_time": int(n_time_bmd),
-                            "n_ex_dates": None if exercise_step_bmd is not None else int(n_ex_dates_cn),
-                            "exercise_step": exercise_step_bmd,
-                        },
-                    )
-                except Exception as exc:
-                    st.error(f"Erreur Bermudan PDE : {exc}")
+                        "n_ex_dates": None if exercise_step_bmd is not None else int(n_ex_dates_cn),
+                        "exercise_step": exercise_step_bmd,
+                    },
+                )
+            except Exception as exc:
+                st.error(f"Erreur Bermudan PDE : {exc}")
 
             with st.expander("Heatmap Bermudan (PDE)", expanded=False):
                 grid_bmd = st.slider(
