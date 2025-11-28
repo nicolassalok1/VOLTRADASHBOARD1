@@ -4900,229 +4900,221 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
         with tab_european:
             st.header("Option européenne")
             _render_option_text("Option européenne", "european_graph")
-
-            eu_run_flag = st.session_state.get(_k("run_eu_done"), False)
-            if not eu_run_flag:
-                if st.button("🚀 Lancer tous les pricings Euro", key=_k("run_all_euro"), type="primary"):
-                    try:
-                        # Pré-calcul BSM
-                        opt_type_pre = "call" if option_char == "c" else "put"
-                        price_bsm_pre = _vanilla_price_with_dividend(
-                            option_type=opt_type_pre,
-                            S0=common_spot_value,
-                            K=common_strike_value,
-                            T=common_maturity_value,
-                            r=common_rate_value,
-                            dividend=float(d_common),
-                            sigma=common_sigma_value,
-                        )
-                        st.session_state["eu_price_bsm"] = price_bsm_pre
-                        # Pré-calcul Heston CM
-                        params_heston_pre = _heston_params_from_state()
-                        price_cm_pre = _carr_madan_price(
+            params_heston = _heston_params_from_state()
+            K_eu = float(common_strike_value)
+            S0_eu = float(common_spot_value)
+            T_eu = float(common_maturity_value)
+            r_eu = float(common_rate_value)
+            d_eu = float(d_common)
+            sigma_eu = float(common_sigma_value)
+            K_slider = st.slider(
+                "K (strike – visualisation)",
+                min_value=max(0.1, K_eu * 0.5),
+                max_value=K_eu * 1.5,
+                value=K_eu,
+                step=max(0.01, K_eu * 0.01),
+                key=_k("eu_k_slider"),
+            )
+            opt_type = "call" if option_char == "c" else "put"
+            premium_eu = _vanilla_price_with_dividend(
+                option_type=opt_type,
+                S0=S0_eu,
+                K=K_slider,
+                T=T_eu,
+                r=r_eu,
+                dividend=d_eu,
+                sigma=sigma_eu,
+            )
+            s_grid = np.linspace(max(0.1, K_slider * 0.4), K_slider * 1.6, 200)
+            payoff_grid = np.maximum(s_grid - K_slider, 0.0) if opt_type == "call" else np.maximum(K_slider - s_grid, 0.0)
+            pnl_grid = payoff_grid - premium_eu
+            payoff_s0 = float(np.interp(S0_eu, s_grid, payoff_grid))
+            pnl_s0 = payoff_s0 - premium_eu
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(s_grid, payoff_grid, label="Payoff")
+            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
+            ax.axvline(K_slider, color="gray", linestyle="--", label=f"K = {K_slider:.2f}")
+            ax.axvline(S0_eu, color="crimson", linestyle="-.", label=f"S0 = {S0_eu:.2f}")
+            ax.axhline(0, color="black", linewidth=0.8)
+            ax.set_xlabel("Spot")
+            ax.set_ylabel("Payoff / P&L")
+            ax.set_title(f"Vanilla {opt_type.capitalize()} (payoff & P&L)")
+            ax.legend(loc="best")
+            st.pyplot(fig, clear_figure=True)
+            st.caption(
+                f"Prix option = {premium_eu:.4f} | Payoff @ S0 = {payoff_s0:.4f} | "
+                f"P&L net (S0) = {pnl_s0:.4f}"
+            )
+            st.subheader("Heston (référence)")
+            render_method_explainer(
+                "🧮 Méthode Heston pour les options européennes",
+                (
+                    "- **Étape 1 – Choix du cadre probabiliste** : on modélise le sous‑jacent `S_t` et la variance instantanée `v_t` sous la mesure neutre au risque. `S_t` suit une diffusion où le terme de diffusion dépend de `√v_t`, et `v_t` suit un processus de type CIR avec rappel vers `θ`.\n"
+                    "- **Étape 2 – Spécification des paramètres de Heston** : on travaille avec cinq paramètres structurants : `κ` (vitesse de rappel de la variance), `θ` (variance de long terme), `σ_v` (volatilité de la variance), `ρ` (corrélation entre chocs sur `S_t` et `v_t`) et `v0` (variance initiale).\n"
+                    "- **Étape 3 – Préparation des données de marché** : les données CBOE sont téléchargées, nettoyées et ramenées sous forme de points `(S0, K, T, C_mkt)` ou `(P_mkt)`, en filtrant les maturités trop courtes et les prix non exploitables.\n"
+                    "- **Étape 4 – Construction d’un pricer rapide** : pour un jeu de paramètres Heston donné, on évalue les prix de calls européens via la méthode de Carr–Madan (transformée de Fourier) implémentée en `carr_madan_call_torch`, ce qui permet d’avoir un pricer différentiable dans PyTorch.\n"
+                    "- **Étape 5 – Définition de la fonction de perte** : on compare les prix modèle aux prix de marché sur l’ensemble des points, via une fonction de perte de type somme pondérée des carrés des écarts, éventuellement avec des poids pour privilégier certaines zones du smile.\n"
+                    "- **Étape 6 – Optimisation / calibration** : à partir d’un vecteur de paramètres non contraints `u`, on reconstruit des paramètres Heston admissibles (positivité, contraintes de Feller) puis on minimise la perte par descente de gradient ou quasi‑Newton (itérations jusqu’à `max_iters` avec un pas `learning_rate`).\n"
+                    "- **Étape 7 – Exploitation des paramètres calibrés** : une fois les paramètres calibrés obtenus, on peut pricer des options européennes, dériver des surfaces d’IV et comparer au BSM / MC.\n"
+                ),
+            )
+            render_inputs_explainer(
+                "🔧 Paramètres utilisés – Heston européen",
+                (
+                    "- **\"K (strike)\"** : strike de référence saisi dans la barre latérale.\n"
+                    "- **\"T (maturité, années)\"** : maturité commune pour les surfaces.\n"
+                    "- **\"Taux sans risque r\"** et **\"Dividende continu d\"** : paramètres de taux.\n"
+                    "- **\"Ticker (sous-jacent)\"** : code CBOE utilisé pour la collecte des options.\n"
+                    "- **\"Largeur bande T (±)\" et \"Maturité T cible\" : bornes de calibration.\n"
+                ),
+            )
+            st.caption("Pricing direct avec Carr–Madan (Heston calibré).")
+            price_cm = st.session_state.get("eu_price_heston")
+            if price_cm is None:
+                try:
+                    with st.spinner("Calcul Heston Carr–Madan..."):
+                        price_cm = _carr_madan_price(
                             S0=float(common_spot_value),
                             K=float(common_strike_value),
                             T=float(common_maturity_value),
                             r=float(common_rate_value),
                             q=float(d_common),
                             opt_char=option_char,
-                            params=params_heston_pre,
+                            params=params_heston,
                         )
-                        st.session_state["eu_price_heston"] = price_cm_pre
-                    except Exception:
-                        pass
-                    st.session_state[_k("run_eu_done")] = True
-                    st.rerun()
-                st.info("Clique sur le bouton pour afficher immédiatement les prix et les dropdowns d’ajout.")
-
-            if eu_run_flag:
-                params_heston = _heston_params_from_state()
-                st.subheader("Heston (référence)")
-                render_method_explainer(
-                    "🧮 Méthode Heston pour les options européennes",
-                    (
-                        "- **Étape 1 – Choix du cadre probabiliste** : on modélise le sous‑jacent `S_t` et la variance instantanée `v_t` sous la mesure neutre au risque. `S_t` suit une diffusion où le terme de diffusion dépend de `√v_t`, et `v_t` suit un processus de type CIR avec rappel vers `θ`.\n"
-                        "- **Étape 2 – Spécification des paramètres de Heston** : on travaille avec cinq paramètres structurants : `κ` (vitesse de rappel de la variance), `θ` (variance de long terme), `σ_v` (volatilité de la variance), `ρ` (corrélation entre chocs sur `S_t` et `v_t`) et `v0` (variance initiale).\n"
-                        "- **Étape 3 – Préparation des données de marché** : les données CBOE sont téléchargées, nettoyées et ramenées sous forme de points `(S0, K, T, C_mkt)` ou `(P_mkt)`, en filtrant les maturités trop courtes et les prix non exploitables.\n"
-                        "- **Étape 4 – Construction d’un pricer rapide** : pour un jeu de paramètres Heston donné, on évalue les prix de calls européens via la méthode de Carr–Madan (transformée de Fourier) implémentée en `carr_madan_call_torch`, ce qui permet d’avoir un pricer différentiable dans PyTorch.\n"
-                        "- **Étape 5 – Définition de la fonction de perte** : on compare les prix modèle aux prix de marché sur l’ensemble des points, via une fonction de perte de type somme pondérée des carrés des écarts, éventuellement avec des poids pour privilégier certaines zones du smile.\n"
-                        "- **Étape 6 – Optimisation / calibration** : à partir d’un vecteur de paramètres non contraints `u`, on reconstruit des paramètres Heston admissibles (positivité, contraintes de Feller) puis on minimise la perte par descente de gradient ou quasi‑Newton (itérations jusqu’à `max_iters` avec un pas `learning_rate`).\n"
-                        "- **Étape 7 – Exploitation des paramètres calibrés** : une fois les paramètres calibrés obtenus, on peut pricer des options européennes, dériver des surfaces d’IV et comparer au BSM / MC.\n"
-                    ),
-                )
-                render_inputs_explainer(
-                    "🔧 Paramètres utilisés – Heston européen",
-                    (
-                        "- **\"S0 (spot)\"** : niveau actuel du sous‑jacent, utilisé pour centrer la grille de strikes.\n"
-                        "- **\"K (strike)\"** : strike de référence saisi dans la barre latérale.\n"
-                        "- **\"T (maturité, années)\"** : maturité commune pour les surfaces.\n"
-                        "- **\"Taux sans risque r\"** et **\"Dividende continu d\"** : paramètres de taux.\n"
-                        "- **\"Ticker (sous-jacent)\"** : code CBOE utilisé pour la collecte des options.\n"
-                        "- **\"Largeur bande T (±)\" et \"Maturité T cible\" : bornes de calibration.\n"
-                    ),
+                    st.session_state["eu_price_heston"] = price_cm
+                except Exception as exc:
+                    st.error(f"Erreur Carr–Madan : {exc}")
+                    price_cm = None
+            if price_cm is not None:
+                st.success(f"Prix Heston (Carr–Madan) {option_label} = {price_cm:.6f}")
+                misc_heston = {
+                    "heston_params": {
+                        "kappa": float(st.session_state.get("heston_kappa_common", 2.0)),
+                        "theta": float(st.session_state.get("heston_theta_common", 0.04)),
+                        "eta": float(st.session_state.get("heston_eta_common", 0.5)),
+                        "rho": float(st.session_state.get("heston_rho_common", -0.7)),
+                        "v0": float(st.session_state.get("heston_v0_common", 0.04)),
+                    }
+                }
+                render_add_to_dashboard_button(
+                    product_label="Vanilla (Heston CM)",
+                    option_char=option_char,
+                    price_value=price_cm,
+                    strike=common_strike_value,
+                    maturity=common_maturity_value,
+                    key_prefix=_k("save_heston_cm"),
+                    spot=common_spot_value,
+                    misc=misc_heston,
                 )
 
-                st.caption("Pricing direct avec Carr–Madan (Heston calibré).")
-                with st.expander(f"📈 Prix Heston Carr–Madan ({option_label})", expanded=False):
-                    price_cm = st.session_state.get("eu_price_heston")
-                    if price_cm is None:
-                        try:
-                            with st.spinner("Calcul Heston Carr–Madan..."):
-                                price_cm = _carr_madan_price(
-                                    S0=float(common_spot_value),
-                                    K=float(common_strike_value),
-                                    T=float(common_maturity_value),
-                                    r=float(common_rate_value),
-                                    q=float(d_common),
-                                    opt_char=option_char,
-                                    params=params_heston,
-                                )
-                            st.session_state["eu_price_heston"] = price_cm
-                        except Exception as exc:
-                            st.error(f"Erreur Carr–Madan : {exc}")
-                            price_cm = None
-                    if price_cm is not None:
-                        st.success(f"Prix Heston (Carr–Madan) {option_label} = {price_cm:.6f}")
-                        misc_heston = {
-                            "heston_params": {
-                                "kappa": float(st.session_state.get("heston_kappa_common", 2.0)),
-                                "theta": float(st.session_state.get("heston_theta_common", 0.04)),
-                                "eta": float(st.session_state.get("heston_eta_common", 0.5)),
-                                "rho": float(st.session_state.get("heston_rho_common", -0.7)),
-                                "v0": float(st.session_state.get("heston_v0_common", 0.04)),
-                            }
-                        }
-                        render_add_to_dashboard_button(
-                            product_label="Vanilla (Heston CM)",
-                            option_char=option_char,
-                            price_value=price_cm,
-                            strike=common_strike_value,
-                            maturity=common_maturity_value,
-                            key_prefix=_k("save_heston_cm"),
-                            spot=common_spot_value,
-                            misc=misc_heston,
-                        )
+            try:
+                with st.spinner("Calcul heatmap & surface IV Heston…"):
+                    k_vals = heatmap_strike_values
+                    t_vals = heatmap_maturity_values
 
-                with st.expander("Visualisations Heston (Carr–Madan)", expanded=False):
-                    try:
-                        with st.spinner("Calcul heatmap & surface IV Heston…"):
-                            k_vals = heatmap_strike_values
-                            t_vals = heatmap_maturity_values
-
-                            call_matrix = np.zeros((len(t_vals), len(k_vals)), dtype=float)
-                            put_matrix = np.zeros_like(call_matrix)
-                            for i_t, t_val in enumerate(t_vals):
-                                for j_k, k_val in enumerate(k_vals):
-                                    call_matrix[i_t, j_k] = _carr_madan_price(
-                                        S0=float(common_spot_value),
-                                        K=float(k_val),
-                                        T=float(t_val),
-                                        r=float(common_rate_value),
-                                        q=float(d_common),
-                                        opt_char="c",
-                                        params=params_heston,
-                                    )
-                                    put_matrix[i_t, j_k] = _carr_madan_price(
-                                        S0=float(common_spot_value),
-                                        K=float(k_val),
-                                        T=float(t_val),
-                                        r=float(common_rate_value),
-                                        q=float(d_common),
-                                        opt_char="p",
-                                        params=params_heston,
-                                    )
-
-                            # Surface IV sur la base du type d’option courant (call/put)
-                            k_grid, t_grid = np.meshgrid(k_vals, t_vals)
-                            price_grid = call_matrix if option_char == "c" else put_matrix
-                            iv_grid = np.full_like(price_grid, np.nan, dtype=float)
-                            for i_t, t_val in enumerate(t_vals):
-                                for j_k, k_val in enumerate(k_vals):
-                                    iv_grid[i_t, j_k] = implied_vol_option(
-                                        price=float(price_grid[i_t, j_k]),
-                                        S=float(common_spot_value),
-                                        K=float(k_val),
-                                        T=float(t_val),
-                                        r=float(common_rate_value),
-                                        option_type="call" if option_char == "c" else "put",
-                                    )
-                            # Disposition responsive : deux colonnes (Call/Put heatmap prix et surface IV) qui se superposent sur mobile.
-                            col_heatmap, col_iv = st.columns(2)
-                            with col_heatmap:
-                                _render_heatmaps_for_current_option(
-                                    "Heston Carr–Madan (K, T)",
-                                    call_matrix,
-                                    put_matrix,
-                                    k_vals,
-                                    t_vals,
-                                )
-                            with col_iv:
-                                iv_fig = make_iv_surface_figure(k_grid, t_grid, iv_grid, title_suffix=" (Heston Carr–Madan)")
-                                st.pyplot(iv_fig)
-                    except Exception as exc:
-                        st.error(f"Erreur calcul heatmap / surface IV Heston : {exc}")
-
-                st.divider()
-                st.subheader("Black–Scholes–Merton (prix ponctuel + heatmaps)")
-                render_unlock_sidebar_button("eu_bsm", "🔓 Réactiver T (onglet BSM)")
-                render_method_explainer(
-                    "🧮 Méthode Black–Scholes–Merton (BSM)",
-                    (
-                        "- **Étape 1 – Mise sous la mesure neutre au risque** : on suppose GBM avec volatilité constante `σ` et drift `r-d`.\n"
-                        "- **Étape 2 – Calcul des quantités intermédiaires** : `d1`, `d2` pour chaque `(S, K)`.\n"
-                        "- **Étape 3 – Formule de prix** : call/put fermés.\n"
-                        "- **Étape 4 – Construction des heatmaps** : matrices de prix call/put sur la grille Spot × Strike.\n"
-                    ),
-                )
-                render_inputs_explainer(
-                    "🔧 Paramètres utilisés – BSM",
-                    (
-                        "- **\"S0 (spot)\"** et **\"K (strike)\"** : centres de la grille.\n"
-                        "- **\"T (maturité, années)\"**, **\"r\"**, **\"d\"**, **\"σ\"** : paramètres du modèle.\n"
-                        "- **\"Span autour du spot (heatmaps)\"** : amplitude de la grille.\n"
-                    ),
-                )
-                cpflag_eu_bsm = option_label
-                st.caption("Type fixé par l’onglet Call / Put en haut de page.")
-                with st.expander(f"📈 Prix BSM ({cpflag_eu_bsm})", expanded=False):
-                    price_bsm = st.session_state.get("eu_price_bsm")
-                    if price_bsm is None:
-                        with st.spinner("Calcul BSM..."):
-                            opt_type = "call" if option_char == "c" else "put"
-                            price_bsm = _vanilla_price_with_dividend(
-                                option_type=opt_type,
-                                S0=common_spot_value,
-                                K=common_strike_value,
-                                T=common_maturity_value,
-                                r=common_rate_value,
-                                dividend=float(d_common),
-                                sigma=common_sigma_value,
+                    call_matrix = np.zeros((len(t_vals), len(k_vals)), dtype=float)
+                    put_matrix = np.zeros_like(call_matrix)
+                    for i_t, t_val in enumerate(t_vals):
+                        for j_k, k_val in enumerate(k_vals):
+                            call_matrix[i_t, j_k] = _carr_madan_price(
+                                S0=float(common_spot_value),
+                                K=float(k_val),
+                                T=float(t_val),
+                                r=float(common_rate_value),
+                                q=float(d_common),
+                                opt_char="c",
+                                params=params_heston,
                             )
-                        st.session_state["eu_price_bsm"] = price_bsm
-                    st.success(f"Prix BSM ({cpflag_eu_bsm}) = {price_bsm:.6f}")
-                    render_add_to_dashboard_button(
-                        product_label="Vanilla (BSM)",
-                        option_char=option_char,
-                        price_value=price_bsm,
-                        strike=common_strike_value,
-                        maturity=common_maturity_value,
-                        key_prefix=_k("save_bsm"),
-                        spot=common_spot_value,
-                    )
-                st.caption(
-                    f"Paramètres utilisés pour le prix unique BSM : "
-                    f"S0={common_spot_value:.4f}, K={common_strike_value:.4f}, "
-                    f"T={common_maturity_value:.4f}, r={common_rate_value:.4f}, "
-                    f"d={float(d_common):.4f}, σ={common_sigma_value:.4f}"
-                )
-            payoff_desc_euro = (
-                "Call : payoff = max(S - K, 0). Put : payoff = max(K - S, 0). "
-                "La ligne rouge marque le strike K, la ligne pointillée montre un strike voisin pour situer la zone de gain."
+                            put_matrix[i_t, j_k] = _carr_madan_price(
+                                S0=float(common_spot_value),
+                                K=float(k_val),
+                                T=float(t_val),
+                                r=float(common_rate_value),
+                                q=float(d_common),
+                                opt_char="p",
+                                params=params_heston,
+                            )
+
+                    k_grid, t_grid = np.meshgrid(k_vals, t_vals)
+                    price_grid = call_matrix if option_char == "c" else put_matrix
+                    iv_grid = np.full_like(price_grid, np.nan, dtype=float)
+                    for i_t, t_val in enumerate(t_vals):
+                        for j_k, k_val in enumerate(k_vals):
+                            iv_grid[i_t, j_k] = implied_vol_option(
+                                price=float(price_grid[i_t, j_k]),
+                                S=float(common_spot_value),
+                                K=float(k_val),
+                                T=float(t_val),
+                                r=float(common_rate_value),
+                                option_type="call" if option_char == "c" else "put",
+                            )
+                    col_iv, col_heatmap = st.columns(2)
+                    with col_iv:
+                        iv_fig = make_iv_surface_figure(k_grid, t_grid, iv_grid, title_suffix=" (Heston Carr–Madan)")
+                        st.pyplot(iv_fig)
+                    with col_heatmap:
+                        _render_heatmaps_for_current_option(
+                            "Heston Carr–Madan (K, T)",
+                            call_matrix,
+                            put_matrix,
+                            k_vals,
+                            t_vals,
+                        )
+            except Exception as exc:
+                st.error(f"Erreur calcul heatmap / surface IV Heston : {exc}")
+
+            st.divider()
+            st.subheader("Black–Scholes–Merton (prix ponctuel + heatmaps)")
+            render_unlock_sidebar_button("eu_bsm", "🔓 Réactiver T (onglet BSM)")
+            render_method_explainer(
+                "🧮 Méthode Black–Scholes–Merton (BSM)",
+                (
+                    "- **Étape 1 – Mise sous la mesure neutre au risque** : on suppose GBM avec volatilité constante `σ` et drift `r-d`.\n"
+                    "- **Étape 2 – Calcul des quantités intermédiaires** : `d1`, `d2` pour chaque `(S, K)`.\n"
+                    "- **Étape 3 – Formule de prix** : call/put fermés.\n"
+                    "- **Étape 4 – Construction des heatmaps** : matrices de prix call/put sur la grille Spot × Strike.\n"
+                ),
             )
-            _render_payoff_dropdown(
-                f"Option européenne ({option_label})",
-                payoff_desc_euro,
-                lambda s, K, K2: max(s - K, 0.0) if option_char == "c" else max(K - s, 0.0),
+            render_inputs_explainer(
+                "🔧 Paramètres utilisés – BSM",
+                (
+                    "- **\"S0 (spot)\"** et **\"K (strike)\"** : centres de la grille.\n"
+                    "- **\"T (maturité, années)\"**, **\"r\"**, **\"d\"**, **\"σ\"** : paramètres du modèle.\n"
+                    "- **\"Span autour du spot (heatmaps)\"** : amplitude de la grille.\n"
+                ),
+            )
+            cpflag_eu_bsm = option_label
+            st.caption("Type fixé par l’onglet Call / Put en haut de page.")
+            price_bsm = st.session_state.get("eu_price_bsm")
+            if price_bsm is None:
+                with st.spinner("Calcul BSM..."):
+                    opt_type = "call" if option_char == "c" else "put"
+                    price_bsm = _vanilla_price_with_dividend(
+                        option_type=opt_type,
+                        S0=common_spot_value,
+                        K=common_strike_value,
+                        T=common_maturity_value,
+                        r=common_rate_value,
+                        dividend=float(d_common),
+                        sigma=common_sigma_value,
+                    )
+                st.session_state["eu_price_bsm"] = price_bsm
+            st.success(f"Prix BSM ({cpflag_eu_bsm}) = {price_bsm:.6f}")
+            render_add_to_dashboard_button(
+                product_label="Vanilla (BSM)",
+                option_char=option_char,
+                price_value=price_bsm,
+                strike=common_strike_value,
+                maturity=common_maturity_value,
+                key_prefix=_k("save_bsm"),
+                spot=common_spot_value,
+            )
+            st.caption(
+                f"Paramètres utilisés pour le prix unique BSM : "
+                f"S0={common_spot_value:.4f}, K={common_strike_value:.4f}, "
+                f"T={common_maturity_value:.4f}, r={common_rate_value:.4f}, "
+                f"d={float(d_common):.4f}, σ={common_sigma_value:.4f}"
             )
 
         with tab_american:
@@ -5130,12 +5122,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             cpflag_am = option_label
             cpflag_am_char = option_char
             _render_option_text("Option américaine", "american_payoff")
-
-            with st.expander("📊 Graph payoff (américaine)", expanded=False):
-                xs = np.linspace(max(0.1, K_common * 0.5), K_common * 1.5, 120)
-                ys = [max(x - K_common, 0.0) if option_char == "c" else max(K_common - x, 0.0) for x in xs]
-                fig_pay = _payoff_plot(xs, ys, f"Payoff américaine ({cpflag_am})", strike_lines=[K_common])
-                st.plotly_chart(fig_pay, width="stretch")
 
             st.subheader("Arbre binomial CRR")
             render_method_explainer(
@@ -5378,91 +5364,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 )
             except Exception as exc:
                 st.error(f"Erreur Bermudan PDE : {exc}")
-
-            with st.expander("Heatmap Bermudan (PDE)", expanded=False):
-                grid_bmd = st.slider(
-                    "Taille de grille (spots/strikes)",
-                    min_value=3,
-                    max_value=11,
-                    value=7,
-                    step=2,
-                    key=_k("bmd_heat_grid"),
-                )
-                n_spatial_heat = st.number_input(
-                    "Points spatiaux (heatmap)",
-                    value=max(80, int(n_spatial_bmd)),
-                    min_value=60,
-                    step=20,
-                    key=_k("bmd_heat_space"),
-                )
-                n_time_heat = st.number_input(
-                    "Points temporels (heatmap)",
-                    value=max(120, int(n_time_bmd)),
-                    min_value=80,
-                    step=20,
-                    key=_k("bmd_heat_time"),
-                )
-                if st.button("Calculer la heatmap Bermudan", key=_k("bmd_heat_btn")):
-                    with st.spinner("Calcul heatmap Bermudan (PDE)..."):
-                        spots_grid = _heatmap_axis(S0_common, heatmap_span, n_points=int(grid_bmd))
-                        strikes_grid = _heatmap_axis(K_common, heatmap_span, n_points=int(grid_bmd))
-                        cn_heat_kwargs = {
-                            "Typeflag": "Bmd",
-                            "cpflag": "c",
-                            "S0": S0_common,
-                            "K": K_common,
-                            "T": T_common,
-                            "vol": sigma_common,
-                            "r": r_common,
-                            "d": d_common,
-                            "n_spatial": int(n_spatial_heat),
-                            "n_time": int(n_time_heat),
-                        }
-                        if exercise_step_bmd is not None:
-                            cn_heat_kwargs["exercise_step"] = exercise_step_bmd
-                        else:
-                            cn_heat_kwargs["n_exercise_dates"] = int(n_ex_dates_cn)
-                        solver_heat = CrankNicolsonBS(**cn_heat_kwargs)
-                        call_matrix = np.zeros((len(strikes_grid), len(spots_grid)))
-                        put_matrix = np.zeros_like(call_matrix)
-                        for i_strike, strike_val in enumerate(strikes_grid):
-                            for j_spot, spot_val in enumerate(spots_grid):
-                                call_matrix[i_strike, j_spot], _, _, _ = solver_heat.CN_option_info(
-                                    Typeflag="Bmd",
-                                    cpflag="c",
-                                    S0=float(spot_val),
-                                    K=float(strike_val),
-                                    T=T_common,
-                                    vol=sigma_common,
-                                    r=r_common,
-                                    d=d_common,
-                                )
-                                put_matrix[i_strike, j_spot], _, _, _ = solver_heat.CN_option_info(
-                                    Typeflag="Bmd",
-                                    cpflag="p",
-                                    S0=float(spot_val),
-                                    K=float(strike_val),
-                                    T=T_common,
-                                    vol=sigma_common,
-                                    r=r_common,
-                                    d=d_common,
-                                )
-                        _render_heatmaps_for_current_option(
-                            "Bermudan (PDE)",
-                            call_matrix,
-                            put_matrix,
-                            spots_grid,
-                            strikes_grid,
-                        )
-
-            payoff_desc_bmd = (
-                "Payoff = max(S-K,0) pour un call / max(K-S,0) pour un put, exercé sur un ensemble de dates discrètes."
-            )
-            _render_payoff_dropdown(
-                f"Option bermudéenne ({option_label})",
-                payoff_desc_bmd,
-                lambda s, K, K2: max(s - K, 0.0) if option_char == "c" else max(K - s, 0.0),
-            )
 
         # Données SPY 1 an pour les onglets path-dependent (valeur de référence S0)
         spy_close_path = None
