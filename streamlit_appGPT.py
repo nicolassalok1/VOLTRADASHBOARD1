@@ -1811,6 +1811,41 @@ def run_app_options():
             ticker_cols.append(col_str)
         return df, ticker_cols
 
+    def load_close_series_for_ticker(ticker: str, fallback_value: float | None = None) -> pd.Series:
+        """
+        Charge une série de clôtures pour un ticker depuis cache_CSV/closing_cache.csv.
+        Si absent ou invalide, télécharge via yfinance et met à jour le cache.
+        """
+        ticker_norm = (ticker or "SPY").strip().upper()
+        # 1) Cache local
+        try:
+            if CLOSING_CACHE_FILE.exists():
+                df_cache = pd.read_csv(CLOSING_CACHE_FILE, parse_dates=True)
+                date_col = next((c for c in df_cache.columns if str(c).lower() in {"date", "datetime", "index"}), None)
+                price_cols = [c for c in df_cache.columns if str(c).lower() not in {"date", "datetime", "index"}]
+                price_col = ticker_norm if ticker_norm in df_cache.columns else (price_cols[0] if len(price_cols) == 1 else None)
+                if price_col:
+                    dates = pd.to_datetime(df_cache[date_col]) if date_col else pd.RangeIndex(len(df_cache))
+                    series = pd.Series(df_cache[price_col].values, index=dates, name="Close")
+                    if not series.empty:
+                        return series
+        except Exception:
+            pass
+        # 2) Téléchargement (un seul ticker) et mise à jour cache
+        try:
+            df_dl = fetch_closing_prices([ticker_norm], period="1y", interval="1d")
+            if df_dl is not None and not df_dl.empty and ticker_norm in df_dl.columns:
+                CLOSING_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                df_dl.to_csv(CLOSING_CACHE_FILE, index=False)
+                dates = pd.to_datetime(df_dl.iloc[:, 0])
+                return pd.Series(df_dl[ticker_norm].values, index=dates, name="Close")
+        except Exception:
+            pass
+        # 3) Fallback simple
+        if fallback_value is not None:
+            return pd.Series([fallback_value], index=pd.Index([datetime.date.today()]), name="Close")
+        return pd.Series(dtype=float)
+
 
     class BasketOption:
         def __init__(self, weights, prices, volatility, corr, strike, maturity, rate):
@@ -4802,7 +4837,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
         with tab_grp_barrier:
             st.subheader("Barrières (vanilla / binaire) – vue Notebook")
-            spy_close = None
             s0_ref = float(common_spot_value)
             hist_tkr = (
                 st.session_state.get("common_underlying")
@@ -4810,14 +4844,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 or st.session_state.get("heston_cboe_ticker")
                 or "SPY"
             ).strip().upper()
-            try:
-                from pricing import fetch_spy_history
-
-                spy_close = fetch_spy_history(ticker=hist_tkr)
-            except Exception as exc:
-                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
-            if spy_close is None or spy_close.empty:
-                spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+            spy_close = load_close_series_for_ticker(hist_tkr, fallback_value=s0_ref)
 
             strike_anchor_bar = float(common_spot_value)
             col1, col2, col3 = st.columns(3)
@@ -4884,11 +4911,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close.index, spy_close.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(strike_b, color="gray", linestyle="--", label=f"Strike = {strike_b:.2f}")
             ax_ts.axhline(barrier_b, color="firebrick", linestyle=":", label=f"Barriere = {barrier_b:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (strike/barrière)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (strike/barrière)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -5818,8 +5845,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             except Exception as exc:
                 st.error(f"Erreur Bermudan PDE : {exc}")
 
-        # Données SPY 1 an pour les onglets path-dependent (valeur de référence S0)
-        spy_close_path = None
+        # Données de clôture 1 an pour les onglets path-dependent (valeur de référence S0)
         s0_path = float(common_spot_value)
         hist_tkr = (
             st.session_state.get("common_underlying")
@@ -5827,14 +5853,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             or st.session_state.get("heston_cboe_ticker")
             or "SPY"
         ).strip().upper()
-        try:
-            from pricing import fetch_spy_history
-
-            spy_close_path = fetch_spy_history(ticker=hist_tkr)
-        except Exception:
-            spy_close_path = None
-        if spy_close_path is None or getattr(spy_close_path, "empty", True):
-            spy_close_path = pd.Series([s0_path], index=pd.Index([datetime.date.today()]), name="Close")
+        spy_close_path = load_close_series_for_ticker(hist_tkr, fallback_value=s0_path)
 
         with tab_lookback:
             st.subheader("Lookback floating – vue Notebook")
@@ -5888,12 +5907,12 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(min_lb, color="teal", linestyle=":", label=f"Min = {min_lb:.2f}")
             ax_ts.axhline(max_lb, color="gray", linestyle="--", label=f"Max = {max_lb:.2f}")
             ax_ts.axhline(s0_path, color="firebrick", linestyle="-.", label=f"S0 = {s0_path:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Lookback)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Lookback)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -6009,11 +6028,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(avg_as, color="purple", linestyle=":", label=f"Moyenne = {avg_as:.2f}")
             ax_ts.axhline(strike_as, color="gray", linestyle="--", label=f"K = {strike_as:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Asian arith)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Asian arith)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -6497,11 +6516,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             opt_type = "call" if option_char.lower() == "c" else "put"
             strike_forward = m_factor * spot_start
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(spot_start, color="gray", linestyle="--", label=f"S_start = {spot_start:.2f}")
             ax_ts.axhline(strike_forward, color="firebrick", linestyle=":", label=f"K = m*S_start = {strike_forward:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Forward-start)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Forward-start)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -7747,7 +7766,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
         with tab_calendar:
             st.subheader("Calendar spread – vue Notebook")
-            spy_close = None
             s0_ref = float(common_spot_value)
             hist_tkr = (
                 st.session_state.get("common_underlying")
@@ -7755,14 +7773,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 or st.session_state.get("heston_cboe_ticker")
                 or "SPY"
             ).strip().upper()
-            try:
-                from pricing import fetch_spy_history
-
-                spy_close = fetch_spy_history(ticker=hist_tkr)
-            except Exception as exc:
-                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
-            if spy_close is None or spy_close.empty:
-                spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+            spy_close = load_close_series_for_ticker(hist_tkr, fallback_value=s0_ref)
 
             strike_anchor_cal = float(common_spot_value)
             col1, col2 = st.columns(2)
@@ -7812,11 +7823,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
             forward_start_date = datetime.date.today() + datetime.timedelta(days=int(t_short * 365))
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close.index, spy_close.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(strike_cal, color="gray", linestyle="--", label=f"K = {strike_cal:.2f}")
             ax_ts.axvline(forward_start_date, color="purple", linestyle=":", label=f"Start ~ {forward_start_date.isoformat()}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (strike / forward start)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (strike / forward start)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -7883,7 +7894,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
         with tab_diagonal:
             st.subheader("Diagonal spread – vue Notebook")
-            spy_close = None
             s0_ref = float(common_spot_value)
             hist_tkr = (
                 st.session_state.get("common_underlying")
@@ -7891,14 +7901,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 or st.session_state.get("heston_cboe_ticker")
                 or "SPY"
             ).strip().upper()
-            try:
-                from pricing import fetch_spy_history
-
-                spy_close = fetch_spy_history(ticker=hist_tkr)
-            except Exception as exc:
-                st.error(f"Impossible de récupérer les clôtures SPY : {exc}")
-            if spy_close is None or spy_close.empty:
-                spy_close = pd.Series([s0_ref], index=pd.Index([datetime.date.today()]), name="Close")
+            spy_close = load_close_series_for_ticker(hist_tkr, fallback_value=s0_ref)
 
             strike_anchor_diag = float(common_spot_value)
             col1, col2 = st.columns(2)
@@ -7956,12 +7959,12 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
 
             forward_start_date = datetime.date.today() + datetime.timedelta(days=int(t_near * 365))
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close.index, spy_close.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close.index, spy_close.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(k_near, color="gray", linestyle="--", label=f"K near = {k_near:.2f}")
             ax_ts.axhline(k_far, color="firebrick", linestyle=":", label=f"K far = {k_far:.2f}")
             ax_ts.axvline(forward_start_date, color="purple", linestyle=":", label=f"Start near ~ {forward_start_date.isoformat()}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (strikes / start)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (strikes / start)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -8078,11 +8081,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(avg_ag, color="purple", linestyle=":", label=f"Moyenne = {avg_ag:.2f}")
             ax_ts.axhline(strike_ag, color="gray", linestyle="--", label=f"K = {strike_ag:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Asian géo)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Asian géo)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -8195,12 +8198,12 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(min_lbf, color="teal", linestyle=":", label=f"Min = {min_lbf:.2f}")
             ax_ts.axhline(max_lbf, color="gray", linestyle="--", label=f"Max = {max_lbf:.2f}")
             ax_ts.axhline(strike_lbf, color="firebrick", linestyle="-.", label=f"K = {strike_lbf:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Lookback fixed)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Lookback fixed)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
@@ -8300,10 +8303,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             pnl_s0 = payoff_s0 - premium
 
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
-            ax_ts.plot(spy_close_path.index, spy_close_path.values, label="SPY close (1y)")
+            ax_ts.plot(spy_close_path.index, spy_close_path.values, label=f"{hist_tkr} close (1y)")
             ax_ts.axhline(s0_path, color="gray", linestyle="--", label=f"S0 = {s0_path:.2f}")
             ax_ts.set_ylabel("Prix")
-            ax_ts.set_title("Clôtures SPY (Cliquet)")
+            ax_ts.set_title(f"Clôtures {hist_tkr} (Cliquet)")
             ax_ts.legend(loc="best")
             fig_ts.autofmt_xdate()
             st.pyplot(fig_ts, clear_figure=True)
