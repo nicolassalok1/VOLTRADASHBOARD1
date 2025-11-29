@@ -4690,7 +4690,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike",
                     min_value=0.6 * s0_ref,
                     max_value=1.4 * s0_ref,
-                    value=s0_ref,
+                    value=float(round(s0_ref)),
                     step=0.5,
                     key=_k("barrier_all_strike"),
                 )
@@ -4698,7 +4698,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Barrière",
                     min_value=0.5 * s0_ref,
                     max_value=1.8 * s0_ref,
-                    value=1.05 * s0_ref,
+                    value=float(round(s0_ref)),
                     step=0.5,
                     key=_k("barrier_all_level"),
                 )
@@ -4716,7 +4716,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     key=_k("barrier_all_payout"),
                 )
             with col3:
-                r_b = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("barrier_all_r"))
+                r_b = float(common_rate_value)
                 T_b = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("barrier_all_T"))
             iv_bar = _get_cached_iv_for(strike_b, T_b, call_put_b)
             sigma_b = float(iv_bar) if iv_bar is not None and np.isfinite(iv_bar) and iv_bar > 0 else float(common_sigma_value)
@@ -5850,7 +5850,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     key=_k("asian_avg"),
                 )
             with col2:
-                r_as = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("asian_r"))
+                # r est récupéré du cache commun (common_rate)
+                r_as = float(common_rate_value)
                 T_as = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("asian_T"))
             iv_as = _get_cached_iv_for(strike_as, T_as, option_type_as)
             sigma_as = float(iv_as) if iv_as is not None and np.isfinite(iv_as) and iv_as > 0 else float(common_sigma_value)
@@ -7911,7 +7912,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     key=_k("asian_geo_avg"),
                 )
             with col2:
-                r_ag = st.slider("r", min_value=-0.05, max_value=0.1, value=common_rate_value, step=0.005, key=_k("asian_geo_r"))
+                r_ag = float(common_rate_value)
                 T_ag = st.slider("T (années)", min_value=0.05, max_value=2.0, value=common_maturity_value, step=0.05, key=_k("asian_geo_T"))
             iv_ag = _get_cached_iv_for(strike_ag, T_ag, option_type_ag)
             sigma_ag = float(iv_ag) if iv_ag is not None and np.isfinite(iv_ag) and iv_ag > 0 else float(common_sigma_value)
