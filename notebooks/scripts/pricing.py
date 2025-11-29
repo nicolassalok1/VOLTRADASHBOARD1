@@ -655,7 +655,15 @@ def payoff_lookback_floating(spot, min_path: float, max_path: float, option_type
     return np.maximum(s - min_path, 0.0)
 
 
-def view_lookback(spot_ref: float, min_path: float, max_path: float, span: float = 0.5, n: int = 300, **kwargs):
+def view_lookback(
+    spot_ref: float,
+    min_path: float,
+    max_path: float,
+    span: float = 0.5,
+    n: int = 300,
+    k_ref: float | None = None,
+    **kwargs,
+):
     premium = float(payoff_lookback_floating(spot_ref, min_path, max_path, option_type=kwargs.get("option_type", "call")))
     s_grid = np.linspace(spot_ref * (1.0 - span), spot_ref * (1.0 + span), n)
     payoff_grid = payoff_lookback_floating(s_grid, min_path, max_path, option_type=kwargs.get("option_type", "call"))

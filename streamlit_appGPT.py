@@ -5787,6 +5787,14 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     step=0.5,
                     key=_k("lb_max"),
                 )
+                strike_lb = st.slider(
+                    "Strike (référence)",
+                    min_value=0.8 * s0_path,
+                    max_value=1.2 * s0_path,
+                    value=float(round(s0_path)),
+                    step=0.5,
+                    key=_k("lb_k"),
+                )
             with col2:
                 span_lb = st.slider("Span payoff (%)", min_value=0.1, max_value=1.0, value=0.5, step=0.05, key=_k("lb_span"))
 
@@ -5796,6 +5804,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 max_lb,
                 option_type=option_type_lb,
                 span=span_lb,
+                k_ref=float(strike_lb),
             )
             premium = float(view_dyn.get("premium", 0.0))
             price_display = abs(premium)
@@ -5851,7 +5860,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "option_type": option_type_lb,
                     "product_type": "Lookback floating",
                     "type": "Lookback floating",
-                    "strike": float(max_lb),
+                    "strike": float(strike_lb),
                     "expiration": expiration_dt.isoformat(),
                     "quantity": int(qty),
                     "avg_price": price,
@@ -5863,6 +5872,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "misc": {
                         "min_path": float(min_lb),
                         "max_path": float(max_lb),
+                        "strike_ref": float(strike_lb),
                         "span": float(span_lb),
                         "spot_at_pricing": float(s0_path),
                     },
@@ -6394,14 +6404,15 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 step=0.5,
                 key=_k("forward_start_s_start"),
             )
-            m_factor = st.slider(
-                "Multiplicateur m (strike = m * S_start)",
-                min_value=0.5,
-                max_value=1.5,
-                value=1.0,
-                step=0.05,
-                key=_k("forward_start_m"),
+            strike_fs = st.slider(
+                "Strike (K = m × S_start)",
+                min_value=0.8 * float(s0_path),
+                max_value=1.2 * float(s0_path),
+                value=float(round(s0_path)),
+                step=0.5,
+                key=_k("forward_start_k"),
             )
+            m_factor = float(strike_fs / spot_start) if spot_start else 1.0
             opt_type = "call" if option_char.lower() == "c" else "put"
             strike_forward = m_factor * spot_start
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
