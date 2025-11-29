@@ -4749,7 +4749,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
         )
 
         with tab_grp_vanilla:
-            tab_heston, tab_european, tab_american, tab_bermudan = st.tabs(["Heston", "Européenne", "Américaine", "Bermuda"])
+            tab_heston, tab_european, tab_american, tab_bermudan = st.tabs(["Européenne par Heston", "Européenne (masquée)", "Américaine", "Bermuda"])
 
         with tab_grp_path:
             (
@@ -4946,126 +4946,9 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 strike_common=common_strike_value,
                 key_prefix=_k("basket"),
             )
-
         with tab_european:
-            opt_label_local_eu, opt_char_local_eu = _choose_option_select("opt_choice_eu_tab", option_char)
-            option_label, option_char = opt_label_local_eu, opt_char_local_eu
-            st.header("Option européenne")
-            _render_option_text("Option européenne", "european_graph")
-            calib_T_target = st.session_state.get("heston_calib_T_target")
-            K_eu = float(common_strike_value)
-            S0_eu = float(common_spot_value)
-            T_eu = float(common_maturity_value)
-            r_eu = float(common_rate_value)
-            d_eu = float(d_common)
-            sigma_eu = float(common_sigma_value)
-            K_slider = st.slider(
-                "K (strike – visualisation)",
-                min_value=max(0.1, S0_eu - 20.0),
-                max_value=S0_eu + 20.0,
-                value=float(round(S0_eu)),
-                step=max(0.01, K_eu * 0.01),
-                key=_k("eu_k_slider"),
-            )
-            T_slider = st.slider(
-                "T (années – visualisation BSM)",
-                min_value=0.05,
-                max_value=2.0,
-                value=float(calib_T_target) if calib_T_target is not None else float(common_maturity_value),
-                step=0.01,
-                key=_k("eu_T_slider"),
-            )
-            st.session_state["eu_T_slider_val"] = T_slider
-            opt_type = "call" if option_char == "c" else "put"
-            iv_eu = _get_cached_iv_for(K_slider, T_slider, opt_type)
-            sigma_eu_eff = float(iv_eu) if iv_eu is not None and np.isfinite(iv_eu) and iv_eu > 0 else sigma_eu
-            if iv_eu is not None and np.isfinite(iv_eu) and iv_eu > 0:
-                st.caption(f"IV récupérée (cache) ≈ {iv_eu:.4f}")
-            else:
-                st.caption("IV non trouvée dans le cache, usage de σ par défaut.")
-            premium_eu = _vanilla_price_with_dividend(
-                option_type=opt_type,
-                S0=float(common_spot_value),
-                K=float(K_slider),
-                T=float(common_maturity_value),
-                r=float(common_rate_value),
-                dividend=float(d_common),
-                sigma=float(sigma_eu_eff),
-            )
-            s_grid = np.linspace(max(0.1, K_slider * 0.4), K_slider * 1.6, 200)
-            payoff_grid = np.maximum(s_grid - K_slider, 0.0) if opt_type == "call" else np.maximum(K_slider - s_grid, 0.0)
-            pnl_grid = payoff_grid - premium_eu
-            payoff_s0 = float(np.interp(S0_eu, s_grid, payoff_grid))
-            pnl_s0 = payoff_s0 - premium_eu
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.plot(s_grid, payoff_grid, label="Payoff")
-            ax.plot(s_grid, pnl_grid, label="P&L net", color="darkorange")
-            ax.axvline(K_slider, color="gray", linestyle="--", label=f"K = {K_slider:.2f}")
-            ax.axvline(S0_eu, color="crimson", linestyle="-.", label=f"S0 = {S0_eu:.2f}")
-            ax.axhline(0, color="black", linewidth=0.8)
-            ax.set_xlabel("Spot")
-            ax.set_ylabel("Payoff / P&L")
-            ax.set_title(f"Vanilla {opt_type.capitalize()} (payoff & P&L)")
-            ax.legend(loc="best")
-            st.pyplot(fig, clear_figure=True)
-            st.subheader("Black–Scholes–Merton (prix ponctuel + heatmaps)")
-            render_unlock_sidebar_button("eu_bsm", "🔓 Réactiver T (onglet BSM)")
-            render_method_explainer(
-                "🧮 Méthode Black–Scholes–Merton (BSM)",
-                (
-                    "- **Étape 1 – Mise sous la mesure neutre au risque** : on suppose GBM avec volatilité constante `σ` et drift `r-d`.\n"
-                    "- **Étape 2 – Calcul des quantités intermédiaires** : `d1`, `d2` pour chaque `(S, K)`.\n"
-                    "- **Étape 3 – Formule de prix** : call/put fermés.\n"
-                    "- **Étape 4 – Construction des heatmaps** : matrices de prix call/put sur la grille Spot × Strike.\n"
-                ),
-            )
-            render_inputs_explainer(
-                "🔧 Paramètres utilisés – BSM",
-                (
-                    "- **\"S0 (spot)\"** et **\"K (strike)\"** : centres de la grille.\n"
-                    "- **\"T (maturité, années)\"**, **\"r\"**, **\"d\"**, **\"σ\"** : paramètres du modèle.\n"
-                    "- **\"Span autour du spot (heatmaps)\"** : amplitude de la grille.\n"
-                ),
-            )
-            cpflag_eu_bsm = option_label
-            st.caption("Type choisi via la selectbox (Call/Put).")
-            with st.spinner("Calcul BSM..."):
-                if option_char == "c":
-                    price_bsm = bs_price_call(
-                        S=float(common_spot_value),
-                        K=float(K_slider),
-                        r=float(common_rate_value),
-                        q=float(d_common),
-                        sigma=float(sigma_eu_eff),
-                        T=float(T_slider),
-                    )
-                else:
-                    price_bsm = bs_price_put(
-                        S=float(common_spot_value),
-                        K=float(K_slider),
-                        r=float(common_rate_value),
-                        q=float(d_common),
-                        sigma=float(sigma_eu_eff),
-                        T=float(T_slider),
-                    )
-            st.session_state["eu_price_bsm"] = price_bsm
-            st.success(f"Prix BSM ({cpflag_eu_bsm}) = {price_bsm:.6f}")
-            render_add_to_dashboard_button(
-                product_label="Vanilla (BSM)",
-                option_char=option_char,
-                price_value=price_bsm,
-                strike=K_slider,
-                maturity=T_slider,
-                key_prefix=_k("save_bsm"),
-                spot=common_spot_value,
-            )
-            st.caption(
-                f"Paramètres utilisés pour le prix unique BSM : "
-                f"S0={common_spot_value:.4f}, K={float(K_slider):.4f}, "
-                f"T={float(T_slider):.4f}, r={common_rate_value:.4f}, "
-                f"d={float(d_common):.4f}, σ={sigma_eu_eff:.4f}"
-            )
-            
+            st.info("Onglet Européenne (BSM) masqué pour le moment.")
+
         with tab_heston:
             st.header("Option européenne – Heston")
             _render_option_text("Option européenne (Heston)", "european_graph_heston")
