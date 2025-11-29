@@ -87,8 +87,8 @@ LEGACY_OPTIONS_META_FILE = DATASETS_DIR / "options_last_meta.json"
 HESTON_PARAMS_FILE = JSON_DIR / "heston_params.json"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
-sys.path.insert(0, str(NOTEBOOKS_SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_SCRIPT_DIR))
+sys.path.insert(0, str(NOTEBOOKS_SCRIPTS_DIR))
 from rates_utils import get_r, get_q
 from pricing import (
     bs_price_call,
@@ -3302,6 +3302,10 @@ def run_app_options():
             for k in ["heston_kappa_common", "heston_theta_common", "heston_eta_common", "heston_rho_common", "heston_v0_common"]:
                 st.session_state.pop(k, None)
             st.session_state["carr_madan_calibrated"] = False
+            try:
+                HESTON_PARAMS_FILE.write_text("{}", encoding="utf-8")
+            except Exception:
+                pass
         fetch_btn = st.button("🔄 Refresh", type="primary", key="heston_cboe_fetch")
         st.session_state["tkr_common"] = ticker
         st.session_state["common_underlying"] = ticker
@@ -3314,6 +3318,10 @@ def run_app_options():
                 for k in ["heston_kappa_common", "heston_theta_common", "heston_eta_common", "heston_rho_common", "heston_v0_common"]:
                     st.session_state.pop(k, None)
                 st.session_state["carr_madan_calibrated"] = False
+                try:
+                    HESTON_PARAMS_FILE.write_text("{}", encoding="utf-8")
+                except Exception:
+                    pass
             st.session_state["_last_heston_fetch_ticker"] = ticker
 
         col_cfg1, col_cfg2 = st.columns(2)
@@ -5258,6 +5266,9 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                             "S0_ref": float(S0_ref),
                             "rf_rate": float(rf_rate),
                             "dividend_yield": float(div_yield),
+                            "calib_band_T": float(calib_T_band),
+                            "calib_target_T": float(calib_T_target) if calib_T_target is not None else None,
+                            "span_mc": float(span_mc),
                         }
                         save_heston_params_to_json(ticker_local, params_to_save)
                         st.success("✓ Calibration terminée")
@@ -8785,14 +8796,21 @@ def load_options_meta() -> dict:
 
 
 def load_heston_params_from_json(ticker: str) -> dict | None:
-    """Charge les paramètres Heston persistés pour un ticker donné, s'ils existent."""
+    """Charge les paramètres Heston persistés ; compatibilité avec l'ancien format par ticker."""
     tkr = (ticker or "").strip().upper()
     if not tkr or not HESTON_PARAMS_FILE.exists():
         return None
     try:
         with HESTON_PARAMS_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        params = data.get(tkr)
+        # Nouveau format : dictionnaire plat (avec éventuellement la clé "ticker")
+        if isinstance(data, dict) and {"kappa", "theta", "sigma", "rho", "v0"}.issubset(data.keys()):
+            if not data.get("ticker") or str(data.get("ticker")).strip().upper() == tkr:
+                return data
+            # ticker différent -> on ne retourne rien
+            return None
+        # Ancien format : mapping {ticker: params}
+        params = data.get(tkr) if isinstance(data, dict) else None
         if not isinstance(params, dict):
             return None
         return params
@@ -8801,23 +8819,16 @@ def load_heston_params_from_json(ticker: str) -> dict | None:
 
 
 def save_heston_params_to_json(ticker: str, params: dict) -> None:
-    """Persiste les paramètres Heston associés à un ticker (JSON dénormalisé)."""
+    """Persiste les paramètres Heston dans un JSON plat (un seul set de paramètres)."""
     tkr = (ticker or "").strip().upper()
     if not tkr:
         return
     try:
         HESTON_PARAMS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        if HESTON_PARAMS_FILE.exists():
-            try:
-                with HESTON_PARAMS_FILE.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = {}
-        else:
-            data = {}
-        data[tkr] = params
+        payload = dict(params) if isinstance(params, dict) else {}
+        payload["ticker"] = tkr
         with HESTON_PARAMS_FILE.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(payload, f, indent=2)
     except Exception:
         pass
 

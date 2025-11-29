@@ -12,9 +12,9 @@ DEFAULT_Q = 0.0
 DEFAULT_SIGMA = 0.2
 DEFAULT_T = 1.0
 
-_CACHE_SPY_DIR = Path(__file__).resolve().parents[1]  # database/GPTab
+_CACHE_SPY_DIR = Path(__file__).resolve().parents[1] / "cache_CSV"  # database/GPTab/cache_CSV
 _CACHE_SPY_CLOSE = _CACHE_SPY_DIR / "closing_cache.csv"
-_LEGACY_CACHE_SPY_CLOSE = Path(__file__).resolve().parent / "closing_cache_SPY.csv"
+_LEGACY_CACHE_SPY_CLOSE = Path(__file__).resolve().parents[1] / "closing_cache.csv"
 _LEGACY_CACHE_SPY_CLOSE_OLD = Path(__file__).resolve().parent / "_cache_spy_close.csv"
 _CLOSING_CACHE_AGE_HOURS = 0.0
 _HES_DIR = Path(__file__).resolve().parents[2] / "scripts" / "scriptsGPT" / "pricing_scripts"
