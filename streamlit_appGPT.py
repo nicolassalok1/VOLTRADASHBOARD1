@@ -4376,8 +4376,8 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             if structure_name == "Diagonal spread":
                 T_short = st.number_input("Maturité courte", value=float(max(0.1, common_maturity_value * 0.5)), min_value=0.01, key=kk("t_short"))
                 T_long = st.number_input("Maturité longue", value=float(common_maturity_value), min_value=T_short + 0.01, key=kk("t_long"))
-                k_short = st.number_input("Strike court", value=float(common_strike_value), min_value=0.01, key=kk("k_short"))
-                k_long = st.number_input("Strike long", value=float(common_strike_value * 1.05), min_value=0.01, key=kk("k_long"))
+                k_short = st.number_input("Strike court", value=float(round(common_spot_value)), min_value=0.01, key=kk("k_short"))
+                k_long = st.number_input("Strike long", value=float(round(common_spot_value) * 1.05), min_value=0.01, key=kk("k_long"))
                 opt_kind = st.selectbox("Type", ["call", "put"], key=kk("type"))
                 if st.button("Pricer le diagonal", key=kk("btn")):
                     long_leg = _vanilla_price_with_dividend(opt_kind, common_spot_value, k_long, T_long, common_rate_value, float(d_common), common_sigma_value)
@@ -5727,7 +5727,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Min path",
                     min_value=0.5 * s0_path,
                     max_value=1.0 * s0_path,
-                    value=0.9 * s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("lb_min"),
                 )
@@ -5735,7 +5735,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Max path",
                     min_value=1.0 * s0_path,
                     max_value=1.6 * s0_path,
-                    value=1.1 * s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("lb_max"),
                 )
@@ -5837,7 +5837,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike",
                     min_value=0.6 * s0_path,
                     max_value=1.4 * s0_path,
-                    value=s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("asian_k"),
                 )
@@ -5845,7 +5845,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Moyenne (ref)",
                     min_value=0.5 * s0_path,
                     max_value=1.5 * s0_path,
-                    value=avg_close,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("asian_avg"),
                 )
@@ -6341,7 +6341,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 "Spot de départ (S_start)",
                 min_value=0.5 * float(s0_path),
                 max_value=1.5 * float(s0_path),
-                value=float(s0_path),
+                value=float(round(s0_path)),
                 step=0.5,
                 key=_k("forward_start_s_start"),
             )
@@ -7631,7 +7631,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike",
                     min_value=0.6 * s0_ref,
                     max_value=1.4 * s0_ref,
-                    value=s0_ref,
+                    value=float(round(s0_ref)),
                     step=0.5,
                     key=_k("calendar_strike"),
                 )
@@ -7768,7 +7768,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike near",
                     min_value=0.6 * s0_ref,
                     max_value=1.4 * s0_ref,
-                    value=0.98 * s0_ref,
+                    value=float(round(s0_ref)),
                     step=0.5,
                     key=_k("diag_k_near"),
                 )
@@ -7776,7 +7776,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike far",
                     min_value=0.6 * s0_ref,
                     max_value=1.6 * s0_ref,
-                    value=1.02 * s0_ref,
+                    value=float(round(s0_ref) * 1.02),
                     step=0.5,
                     key=_k("diag_k_far"),
                 )
@@ -7898,7 +7898,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike",
                     min_value=0.6 * s0_path,
                     max_value=1.4 * s0_path,
-                    value=s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("asian_geo_k"),
                 )
@@ -7906,7 +7906,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Moyenne (ref)",
                     min_value=0.5 * s0_path,
                     max_value=1.5 * s0_path,
-                    value=avg_close,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("asian_geo_avg"),
                 )
@@ -8014,7 +8014,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Min path",
                     min_value=0.5 * s0_path,
                     max_value=1.0 * s0_path,
-                    value=0.9 * s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("lbf_min"),
                 )
@@ -8022,7 +8022,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Max path",
                     min_value=1.0 * s0_path,
                     max_value=1.6 * s0_path,
-                    value=1.1 * s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("lbf_max"),
                 )
@@ -8031,7 +8031,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "Strike",
                     min_value=0.6 * s0_path,
                     max_value=1.5 * s0_path,
-                    value=s0_path,
+                    value=float(round(s0_path)),
                     step=0.5,
                     key=_k("lbf_k"),
                 )
