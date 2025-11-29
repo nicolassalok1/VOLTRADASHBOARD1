@@ -5133,7 +5133,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 calib_T_target = st.session_state.get("heston_calib_T_target")
                 col_nn, col_modes = st.columns(2)
                 with col_nn:
-                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.4))
+                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.2))
 
                     unique_T = sorted(calls_df["T"].round(2).unique().tolist())
                     if unique_T:
@@ -5163,10 +5163,10 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     calib_T_band = st.number_input(
                         "Largeur bande T (±)",
                         value=calib_T_band_default,
-                        min_value=0.1,
+                        min_value=0.05,
                         max_value=0.5,
-                        step=0.1,
-                        format="%.1f",
+                        step=0.05,
+                        format="%.2f",
                         key=_k("heston_cboe_calib_band"),
                         help="Largeur de la bande de maturités autour de la cible utilisée pour la calibration.",
                     )
@@ -5405,12 +5405,21 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                                 yaxis=dict(autorange=True),
                                 zaxis=dict(autorange=True),
                             ),
+                            scene_dragmode="orbit",
                             height=500,
                             margin=dict(l=0, r=0, b=0, t=0),
-                            dragmode=False,
                             hovermode=False,
                         )
-                        st.plotly_chart(fig_iv, use_container_width=True, key=_k("heston_iv_surface"))
+                        st.plotly_chart(
+                            fig_iv,
+                            use_container_width=True,
+                            key=_k("heston_iv_surface"),
+                            config={
+                                "scrollZoom": False,
+                                "modeBarButtonsToRemove": ["zoom3d", "pan3d", "resetCameraDefault3d", "resetCameraLastSave3d"],
+                                "displaylogo": False,
+                            },
+                        )
                     except Exception as _surf_exc:
                         st.warning(f"Impossible d'afficher la surface IV : {_surf_exc}")
                 except Exception as exc:
