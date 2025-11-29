@@ -6416,6 +6416,14 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 key=_k("forward_start_k"),
             )
             m_factor = float(strike_fs / spot_start) if spot_start else 1.0
+            T_fs = st.slider(
+                "T (années)",
+                min_value=0.05,
+                max_value=2.0,
+                value=float(common_maturity_value),
+                step=0.05,
+                key=_k("forward_start_T"),
+            )
             opt_type = "call" if option_char.lower() == "c" else "put"
             strike_forward = m_factor * spot_start
             fig_ts, ax_ts = plt.subplots(figsize=(8, 3))
@@ -6434,7 +6442,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 r=float(common_rate_value),
                 q=float(d_common),
                 sigma=float(common_sigma_value),
-                T=float(common_maturity_value),
+                T=float(T_fs),
                 option_type=opt_type,
             )
             premium = float(view_dyn.get("premium", 0.0))
@@ -6468,11 +6476,11 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
             ).strip().upper()
             st.caption(f"Sous-jacent: {underlying or 'N/A'} (reprise de l'entête)")
             today = datetime.date.today()
-            expiration_dt = today + datetime.timedelta(days=int((common_maturity_value or 0.0) * 365))
+            expiration_dt = today + datetime.timedelta(days=int((T_fs or 0.0) * 365))
             qty = st.number_input("Quantité", min_value=1, value=1, step=1, key=_k("forward_start_qty_inline"))
             side = st.selectbox("Sens", ["long", "short"], index=0, key=_k("forward_start_side_inline"))
             st.caption(f"S_start: {spot_start:.4f} | m: {m_factor:.4f}")
-            st.caption(f"T (maturité commune, années): {float(common_maturity_value):.4f}")
+            st.caption(f"T (maturité, années): {float(T_fs):.4f}")
 
             if st.button("Ajouter au dashboard", key=_k("forward_start_add_inline")):
                 payload = {
@@ -6486,7 +6494,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     "avg_price": price,
                     "side": side,
                     "S0": float(common_spot_value),
-                    "maturity_years": common_maturity_value,
+                    "maturity_years": float(T_fs),
                     "legs": [
                         {"option_type": opt_char_rain, "strike": float(m_factor * spot_start), "forward_start": True, "S_start": float(spot_start), "m": float(m_factor)},
                     ],
@@ -6496,6 +6504,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         "structure": "Forward-start",
                         "spot_start": float(spot_start),
                         "m_factor": float(m_factor),
+                        "T": float(T_fs),
                         "spot_at_pricing": float(common_spot_value),
                     },
                 }

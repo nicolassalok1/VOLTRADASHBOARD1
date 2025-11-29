@@ -706,7 +706,21 @@ def payoff_forward_start(spot_T, spot_start: float, m: float = 1.0, option_type:
 def view_forward_start(s0: float, spot_start: float, m: float = 1.0, span: float = 0.5, n: int = 300, **kwargs):
     k_eff = m * spot_start
     opt_type = kwargs.get("option_type", "call")
-    premium = bs_price_call(s0, k_eff, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T)) if opt_type != "put" else bs_price_put(s0, k_eff, r=kwargs.get("r", DEFAULT_R), q=kwargs.get("q", DEFAULT_Q), sigma=kwargs.get("sigma", DEFAULT_SIGMA), T=kwargs.get("T", DEFAULT_T))
+    premium = bs_price_call(
+        s0,
+        k_eff,
+        r=kwargs.get("r", DEFAULT_R),
+        q=kwargs.get("q", DEFAULT_Q),
+        sigma=kwargs.get("sigma", DEFAULT_SIGMA),
+        T=kwargs.get("T", DEFAULT_T),
+    ) if opt_type != "put" else bs_price_put(
+        s0,
+        k_eff,
+        r=kwargs.get("r", DEFAULT_R),
+        q=kwargs.get("q", DEFAULT_Q),
+        sigma=kwargs.get("sigma", DEFAULT_SIGMA),
+        T=kwargs.get("T", DEFAULT_T),
+    )
     s_grid = np.linspace(s0 * (1.0 - span), s0 * (1.0 + span), n)
     payoff_grid = np.array([payoff_forward_start(s, spot_start, m=m, option_type=kwargs.get("option_type", "call")) for s in s_grid])
     pnl_grid = payoff_grid - premium
