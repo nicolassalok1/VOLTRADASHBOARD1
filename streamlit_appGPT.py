@@ -69,6 +69,8 @@ OLD_JSON_DIR = APP_DIR / "database" / "jsons"
 try:
     if OLD_JSON_DIR.exists() and not JSON_DIR.exists():
         shutil.copytree(OLD_JSON_DIR, JSON_DIR, dirs_exist_ok=True)
+        # Supprime l'ancien répertoire après migration pour éviter la duplication
+        shutil.rmtree(OLD_JSON_DIR, ignore_errors=True)
 except Exception:
     pass
 JSON_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,7 +82,8 @@ PRICING_SCRIPT_DIR = DATASETS_DIR / "pricing_script"
 CACHE_OPTIONS_HISTORY_FILE = DATASETS_DIR / "options_last_history.csv"
 CACHE_OPTIONS_CALLS_FILE = DATASETS_DIR / "options_last_calls.csv"
 CACHE_OPTIONS_PUTS_FILE = DATASETS_DIR / "options_last_puts.csv"
-CACHE_OPTIONS_META_FILE = DATASETS_DIR / "options_last_meta.json"
+CACHE_OPTIONS_META_FILE = JSON_DIR / "options_last_meta.json"
+LEGACY_OPTIONS_META_FILE = DATASETS_DIR / "options_last_meta.json"
 HESTON_PARAMS_FILE = JSON_DIR / "heston_params.json"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(PRICING_DIR))
@@ -5237,7 +5240,6 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                         max_iters = st.number_input(
                             "Itérations NN (custom)",
                             min_value=50,
-                            max_value=10000,
                             value=500,
                             step=50,
                             key=_k("heston_cboe_max_iters_custom"),
@@ -8813,14 +8815,10 @@ def load_cached_option_history() -> tuple[str | None, pd.DataFrame | None]:
 
 def get_last_cached_option_ticker() -> str | None:
     """Retourne le dernier ticker utilisé pour les options (via meta cache)."""
-    try:
-        with open(CACHE_OPTIONS_META_FILE, "r") as f:
-            meta = json.load(f)
-        tkr = meta.get("ticker")
-        if tkr:
-            return str(tkr).strip().upper()
-    except Exception:
-        return None
+    meta = load_options_meta()
+    tkr = meta.get("ticker")
+    if tkr:
+        return str(tkr).strip().upper()
     return None
 
 
@@ -8852,8 +8850,7 @@ def load_cached_option_chain(ticker: str) -> tuple[pd.DataFrame | None, pd.DataF
     """Load cached CBOE chain if it matches the requested ticker."""
     tkr = (ticker or "").strip().upper()
     try:
-        with open(CACHE_OPTIONS_META_FILE, "r") as f:
-            meta = json.load(f)
+        meta = load_options_meta()
         if meta.get("ticker", "").upper() != tkr or not tkr:
             return None, None, None, None, None
         calls_df = pd.read_csv(CACHE_OPTIONS_CALLS_FILE) if CACHE_OPTIONS_CALLS_FILE.exists() else None
@@ -8864,13 +8861,26 @@ def load_cached_option_chain(ticker: str) -> tuple[pd.DataFrame | None, pd.DataF
 
 
 def load_options_meta() -> dict:
-    """Charge le meta cache options (options_last_meta.json) si disponible."""
+    """Charge le meta cache options (options_last_meta.json) si disponible, avec migration depuis l'ancien emplacement."""
+    # Migration : ancien fichier (DATASETS_DIR) vers JSON_DIR
+    try:
+        if LEGACY_OPTIONS_META_FILE.exists() and not CACHE_OPTIONS_META_FILE.exists():
+            CACHE_OPTIONS_META_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(LEGACY_OPTIONS_META_FILE, CACHE_OPTIONS_META_FILE)
+    except Exception:
+        pass
     try:
         with open(CACHE_OPTIONS_META_FILE, "r") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
-        return {}
+        # Fallback legacy
+        try:
+            with open(LEGACY_OPTIONS_META_FILE, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
 
 def load_heston_params_from_json(ticker: str) -> dict | None:
@@ -10556,6 +10566,7 @@ with st.sidebar:
                 CACHE_OPTIONS_CALLS_FILE,
                 CACHE_OPTIONS_PUTS_FILE,
                 CACHE_OPTIONS_META_FILE,
+                LEGACY_OPTIONS_META_FILE,
                 DATASETS_DIR / "train.csv",
                 DATASETS_DIR / "test.csv",
                 DATASETS_DIR / "basket_closing_prices.csv",
@@ -10582,6 +10593,7 @@ with st.sidebar:
             CACHE_OPTIONS_CALLS_FILE,
             CACHE_OPTIONS_PUTS_FILE,
             CACHE_OPTIONS_META_FILE,
+            LEGACY_OPTIONS_META_FILE,
             DATASETS_DIR / "train.csv",
             DATASETS_DIR / "test.csv",
             DATASETS_DIR / "basket_closing_prices.csv",
