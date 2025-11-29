@@ -5178,7 +5178,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                 calib_T_target = st.session_state.get("heston_calib_T_target")
                 col_nn, col_modes = st.columns(2)
                 with col_nn:
-                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.05))
+                    calib_T_band_default = float(st.session_state.get("heston_cboe_calib_band", 0.02))
 
                     unique_T = sorted(calls_df["T"].round(2).unique().tolist())
                     if unique_T:
@@ -5222,7 +5222,7 @@ Le payoff final est une tente inversée centrée sur le strike, avec profit au c
                     mode = st.radio(
                         "Choisir un mode",
                         ["Rapide", "Bonne", "Excellente", "Custom"],
-                        index=0,
+                        index=3,
                         horizontal=True,
                         key=_k("heston_cboe_mode"),
                         help="Choisit un compromis entre vitesse de calibration et précision de l’ajustement.",
