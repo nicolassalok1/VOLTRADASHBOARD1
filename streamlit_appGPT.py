@@ -3442,6 +3442,21 @@ def run_app_options():
                     "K_common": f"{prefills['K_common']:.2f}",
                     "sigma_common": f"{prefills['sigma_common']:.4f}",
                 }
+                # Met à jour options_last_meta.json immédiatement
+                try:
+                    CACHE_OPTIONS_META_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    with CACHE_OPTIONS_META_FILE.open("w") as f:
+                        json.dump(
+                            {
+                                "ticker": ticker,
+                                "S0_ref": float(S0_ref),
+                                "r": float(rf_rate),
+                                "q": float(div_yield),
+                            },
+                            f,
+                        )
+                except Exception:
+                    pass
                 st.session_state["heston_cboe_loaded_once"] = True
                 # Refresh cached 1y history for this ticker
                 fetch_option_history_to_cache(ticker)
@@ -3601,10 +3616,17 @@ def run_app_options():
     if not tkr_hist:
         st.info("Charge un ticker via la calibration Heston pour afficher l'historique 1 an.")
     else:
-        header_table = pd.DataFrame.from_dict(
-            {"Ticker (cache)": [st.session_state.get("heston_cboe_ticker", "")], "S0": [common_spot_value], "r": [common_rate_value], "d": [float(d_common)]}
+        meta_cache = load_options_meta()
+        meta_table = pd.DataFrame.from_dict(
+            {
+                "Ticker cache": [meta_cache.get("ticker", "")],
+                "S0_ref cache": [meta_cache.get("S0_ref")],
+                "r cache": [meta_cache.get("r")],
+                "q cache": [meta_cache.get("q")],
+                "S0 courant": [common_spot_value],
+            }
         )
-        st.dataframe(header_table, use_container_width=True, hide_index=True)
+        st.dataframe(meta_table, use_container_width=True, hide_index=True)
         hist_df = pd.DataFrame()
         try:
             cli_path = SCRIPTS_DIR / "fetch_history_cli.py"
