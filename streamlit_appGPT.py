@@ -11453,6 +11453,75 @@ with tab1:
     else:
         st.info("No trading systems configured. Add one in the 'Trading Systems' tab.")
 
+    # Expired forwards
+    st.markdown("---")
+    st.markdown("### ⏳ Forwards expirés / clôturés")
+    forwards_all = load_forwards()
+    today = datetime.date.today()
+    expired_fwds = {}
+    for fwd_id, fwd in forwards_all.items():
+        matur_str = fwd.get("maturity")
+        try:
+            matur_dt = datetime.date.fromisoformat(matur_str) if matur_str else None
+        except Exception:
+            matur_dt = None
+        if matur_dt is not None and matur_dt < today:
+            expired_fwds[fwd_id] = fwd
+
+    if expired_fwds:
+        rows_fwd_exp: list[dict] = []
+        for key, fwd in expired_fwds.items():
+            sym = fwd.get("symbol", "")
+            qty = int(fwd.get("quantity", 0) or 0)
+            price_fwd = float(fwd.get("forward_price", 0.0) or 0.0)
+            side = (fwd.get("side") or "long").lower()
+            maturity_str = fwd.get("maturity")
+            try:
+                maturity_dt = datetime.date.fromisoformat(maturity_str) if maturity_str else None
+            except Exception:
+                maturity_dt = None
+            days_to_mat = (maturity_dt - today).days if maturity_dt else None
+            spot_now = float(get_data(sym).get("price", 0.0) or 0.0) if sym else 0.0
+            mult = 1.0 if side == "long" else -1.0
+            pnl_unit = mult * (spot_now - price_fwd)
+            pnl_total = pnl_unit * qty
+            rows_fwd_exp.append({
+                "ID": key,
+                "Symbol": sym,
+                "Side": side.capitalize(),
+                "Quantity": qty,
+                "Forward Price": price_fwd,
+                "Spot Now": round(spot_now, 4),
+                "Maturity": maturity_str,
+                "Days to mat": days_to_mat,
+                "P&L/unit": round(pnl_unit, 4),
+                "P&L total": round(pnl_total, 2),
+            })
+        df_fwd_exp = pd.DataFrame(rows_fwd_exp)
+        st.dataframe(df_fwd_exp, width="stretch", hide_index=True)
+
+        st.markdown("#### Détail / suppression")
+        for key, fwd in expired_fwds.items():
+            with st.expander(f"{key} — {fwd.get('symbol','N/A')} ({fwd.get('side','')})", expanded=False):
+                sym = fwd.get("symbol", "")
+                qty = int(fwd.get("quantity", 0) or 0)
+                price_fwd = float(fwd.get("forward_price", 0.0) or 0.0)
+                side = (fwd.get("side") or "long").lower()
+                spot_now = float(get_data(sym).get("price", 0.0) or 0.0) if sym else 0.0
+                mult = 1.0 if side == "long" else -1.0
+                pnl_unit = mult * (spot_now - price_fwd)
+                pnl_total = pnl_unit * qty
+                st.json(fwd, expanded=False)
+                st.caption(f"Spot actuel: {spot_now:.4f} | P&L/unité: {pnl_unit:.4f} | P&L total: {pnl_total:.2f}")
+                if st.button(f"🗑️ Supprimer {key}", key=f"del_fwd_exp_{key}"):
+                    forwards_all.pop(key, None)
+                    save_forwards(forwards_all)
+                    st.success(f"Forward {key} supprimé.")
+                    time.sleep(0.5)
+                    st.rerun()
+    else:
+        st.info("Aucun forward expiré pour le moment.")
+
     # Expired options at the end of the dashboard
     st.markdown("---")
     st.markdown("### ✅ Options expirées / clôturées")
